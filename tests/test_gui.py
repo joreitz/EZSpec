@@ -179,9 +179,10 @@ def test_backend_switch_keeps_results_equal(app, win):
     w.pipeline_panel.add_step("baseline_arpls")
     pump(app)
     a = w.state.run(ds).final.y.copy()
-    w.switch_backend("python")
+    before = __import__("ezspec").backend_name()
+    w.switch_backend("python" if before == "rust" else "rust")
     b = w.state.run(ds).final.y.copy()
-    w.switch_backend("rust")
+    w.switch_backend(before)
     np.testing.assert_allclose(a, b, rtol=1e-8, atol=1e-8)
 
 

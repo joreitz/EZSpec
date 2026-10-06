@@ -43,9 +43,16 @@ pub fn pad_extrapolate(y: &[f64], pad: usize) -> Vec<f64> {
     out
 }
 
-pub fn snip(y: &[f64], max_half_window: usize, decreasing: bool, filter_order: usize) -> Result<Vec<f64>, CoreError> {
+pub fn snip(
+    y: &[f64],
+    max_half_window: usize,
+    decreasing: bool,
+    filter_order: usize,
+) -> Result<Vec<f64>, CoreError> {
     if ![2, 4, 6, 8].contains(&filter_order) {
-        return Err(CoreError::InvalidParameter("filter_order must be 2, 4, 6 or 8".into()));
+        return Err(CoreError::InvalidParameter(
+            "filter_order must be 2, 4, 6 or 8".into(),
+        ));
     }
     let n = y.len();
     if n < 3 {
@@ -54,7 +61,11 @@ pub fn snip(y: &[f64], max_half_window: usize, decreasing: bool, filter_order: u
     let hw = max_half_window.clamp(1, (n - 1) / 2);
     let mut b = pad_extrapolate(y, hw);
     let m = b.len();
-    let windows: Vec<usize> = if decreasing { (1..=hw).rev().collect() } else { (1..=hw).collect() };
+    let windows: Vec<usize> = if decreasing {
+        (1..=hw).rev().collect()
+    } else {
+        (1..=hw).collect()
+    };
     let mut filt = vec![0.0; m];
     for i in windows {
         for j in i..m - i {
@@ -68,7 +79,8 @@ pub fn snip(y: &[f64], max_half_window: usize, decreasing: bool, filter_order: u
             }
             if filter_order > 6 {
                 f = f.max(
-                    (-pair(i) + 8.0 * pair(3 * i / 4) - 28.0 * pair(i / 2) + 56.0 * pair(i / 4)) / 70.0,
+                    (-pair(i) + 8.0 * pair(3 * i / 4) - 28.0 * pair(i / 2) + 56.0 * pair(i / 4))
+                        / 70.0,
                 );
             }
             filt[j] = f;
@@ -101,7 +113,10 @@ mod tests {
     #[test]
     fn clips_narrow_peaks() {
         let x = linspace(0.0, 100.0, 501);
-        let y: Vec<f64> = x.iter().map(|&t| 2.0 + 10.0 * (-((t - 50.0) / 1.0f64).powi(2)).exp()).collect();
+        let y: Vec<f64> = x
+            .iter()
+            .map(|&t| 2.0 + 10.0 * (-((t - 50.0) / 1.0f64).powi(2)).exp())
+            .collect();
         let b = snip(&y, 20, false, 2).unwrap();
         assert!((b[250] - 2.0).abs() < 0.05, "{}", b[250]);
     }

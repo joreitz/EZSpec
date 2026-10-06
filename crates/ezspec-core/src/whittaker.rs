@@ -122,13 +122,20 @@ pub struct WhittakerSystem {
 impl WhittakerSystem {
     pub fn new(n: usize, lam: f64, d: usize) -> Result<Self, CoreError> {
         if !(lam >= 0.0) || !lam.is_finite() {
-            return Err(CoreError::InvalidParameter(format!("lam must be finite and >= 0, got {lam}")));
+            return Err(CoreError::InvalidParameter(format!(
+                "lam must be finite and >= 0, got {lam}"
+            )));
         }
         if d == 0 {
-            return Err(CoreError::InvalidParameter("diff_order must be >= 1".into()));
+            return Err(CoreError::InvalidParameter(
+                "diff_order must be >= 1".into(),
+            ));
         }
         if n <= d {
-            return Err(CoreError::TooFewPoints { needed: d + 1, got: n });
+            return Err(CoreError::TooFewPoints {
+                needed: d + 1,
+                got: n,
+            });
         }
         let mut pen = penalty(n, d);
         for band in pen.band.iter_mut() {
@@ -155,7 +162,9 @@ impl WhittakerSystem {
             return Err(CoreError::NotPositiveDefinite { row: 0 });
         }
         if w.iter().any(|&v| v < 0.0 || !v.is_finite()) {
-            return Err(CoreError::InvalidParameter("weights must be finite and >= 0".into()));
+            return Err(CoreError::InvalidParameter(
+                "weights must be finite and >= 0".into(),
+            ));
         }
         let mut a = self.pen.clone();
         for i in 0..n {
@@ -205,7 +214,11 @@ fn apply_fixed(w: &mut [f64], fixed: Option<&[f64]>) {
     }
 }
 
-fn initial_weights(n: usize, w0: Option<&[f64]>, fixed: Option<&[f64]>) -> Result<Vec<f64>, CoreError> {
+fn initial_weights(
+    n: usize,
+    w0: Option<&[f64]>,
+    fixed: Option<&[f64]>,
+) -> Result<Vec<f64>, CoreError> {
     let mut w = match w0 {
         Some(w0) => {
             check_len(n, w0.len())?;
@@ -234,7 +247,9 @@ pub fn asls(
     fixed: Option<&[f64]>,
 ) -> Result<BaselineFit, CoreError> {
     if !(p > 0.0 && p < 1.0) {
-        return Err(CoreError::InvalidParameter("p must be between 0 and 1".into()));
+        return Err(CoreError::InvalidParameter(
+            "p must be between 0 and 1".into(),
+        ));
     }
     let n = y.len();
     let system = WhittakerSystem::new(n, lam, d)?;
@@ -258,7 +273,12 @@ pub fn asls(
         }
         w = new_w;
     }
-    Ok(BaselineFit { baseline, weights: w, tol_history: history, converged })
+    Ok(BaselineFit {
+        baseline,
+        weights: w,
+        tol_history: history,
+        converged,
+    })
 }
 
 /// Logistic function evaluated without overflow (scipy.special.expit).
@@ -322,7 +342,12 @@ pub fn arpls(
         }
         w = new_w;
     }
-    Ok(BaselineFit { baseline, weights: w, tol_history: history, converged })
+    Ok(BaselineFit {
+        baseline,
+        weights: w,
+        tol_history: history,
+        converged,
+    })
 }
 
 #[cfg(test)]
@@ -381,7 +406,10 @@ mod tests {
     fn huge_lambda_gives_polynomial_least_squares() {
         // null space of D (order 2) are straight lines -> lam -> inf gives the LS line
         let x = linspace(0.0, 1.0, 101);
-        let y: Vec<f64> = x.iter().map(|&t| 2.0 + 3.0 * t + 0.1 * (20.0 * t).sin()).collect();
+        let y: Vec<f64> = x
+            .iter()
+            .map(|&t| 2.0 + 3.0 * t + 0.1 * (20.0 * t).sin())
+            .collect();
         let w = vec![1.0; x.len()];
         let z = whittaker_smooth(&y, &w, 1e9, 2).unwrap();
         // closed-form LS line
@@ -421,7 +449,10 @@ mod tests {
     #[test]
     fn asls_and_arpls_recover_a_smooth_baseline_under_peaks() {
         let x = linspace(0.0, 100.0, 1000);
-        let truth: Vec<f64> = x.iter().map(|&t| 5.0 + 0.02 * t + 2.0 * (t / 30.0).sin()).collect();
+        let truth: Vec<f64> = x
+            .iter()
+            .map(|&t| 5.0 + 0.02 * t + 2.0 * (t / 30.0).sin())
+            .collect();
         let mut rng = Rng::new(3);
         let y: Vec<f64> = x
             .iter()
@@ -436,7 +467,12 @@ mod tests {
         let r = arpls(&y, 1e6, 2, 50, 1e-3, None, None).unwrap();
         assert!(a.converged && r.converged);
         let rmse = |b: &[f64]| {
-            (b.iter().zip(&truth).map(|(p, q)| (p - q).powi(2)).sum::<f64>() / b.len() as f64).sqrt()
+            (b.iter()
+                .zip(&truth)
+                .map(|(p, q)| (p - q).powi(2))
+                .sum::<f64>()
+                / b.len() as f64)
+                .sqrt()
         };
         assert!(rmse(&a.baseline) < 0.25, "asls rmse {}", rmse(&a.baseline));
         assert!(rmse(&r.baseline) < 0.25, "arpls rmse {}", rmse(&r.baseline));
@@ -450,13 +486,27 @@ mod tests {
         // straight line plus a large band confined to the masked region
         let y: Vec<f64> = x
             .iter()
-            .map(|&t| 1.0 + t + if inside(t) { 3.0 * (std::f64::consts::PI * (t - 0.2) / 0.6).sin() } else { 0.0 })
+            .map(|&t| {
+                1.0 + t
+                    + if inside(t) {
+                        3.0 * (std::f64::consts::PI * (t - 0.2) / 0.6).sin()
+                    } else {
+                        0.0
+                    }
+            })
             .collect();
-        let fixed: Vec<f64> = x.iter().map(|&t| if inside(t) { 0.0 } else { f64::NAN }).collect();
+        let fixed: Vec<f64> = x
+            .iter()
+            .map(|&t| if inside(t) { 0.0 } else { f64::NAN })
+            .collect();
         let r = asls(&y, 1e3, 0.5, 2, 3, 1e-3, None, Some(&fixed)).unwrap();
         for (t, b) in x.iter().zip(&r.baseline) {
             assert!((b - (1.0 + t)).abs() < 1e-8, "{t}: {b}");
         }
-        assert!(r.weights.iter().zip(&x).all(|(w, &t)| !inside(t) || *w == 0.0));
+        assert!(r
+            .weights
+            .iter()
+            .zip(&x)
+            .all(|(w, &t)| !inside(t) || *w == 0.0));
     }
 }

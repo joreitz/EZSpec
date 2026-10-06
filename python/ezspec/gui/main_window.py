@@ -159,6 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a.addAction("Peaks automatisch finden", self.auto_peaks)
         a.addAction("Profil-Konfidenzintervalle", self.run_profile)
         a.addAction("Bootstrap…", self.run_bootstrap)
+        a.addAction("Baseline-Systematik (λ/Fenster variieren)", self.run_systematics)
         a.addSeparator()
         a.addAction("Serie / globaler Fit…", self.series_dialog, QtGui.QKeySequence("Ctrl+G"))
         a.addSeparator()
@@ -606,6 +607,28 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.information(self, "Serie", "Mindestens zwei Datensätze importieren.")
             return
         SeriesDialog(self.state, self).exec()
+
+    def run_systematics(self):
+        from ..fit import baseline_systematics
+        ds = self._require_fit()
+        if ds is None or self._task is not None:
+            return
+        self._busy(True, "Baseline-Systematik: Varianten werden gefittet …")
+        result = ds.fit_result
+
+        def done(res):
+            self._task = None
+            self._busy(False, "Baseline-Systematik fertig.")
+            result.extra["baseline_systematics"] = res
+            self.state.fitChanged.emit(ds.id)
+            self.results_panel.tabs.setCurrentIndex(4)
+
+        def failed(msg):
+            self._task = None
+            self._busy(False)
+            QtWidgets.QMessageBox.warning(self, "Baseline-Systematik", msg.split("\n\n")[0])
+        self._task = start_task(baseline_systematics, done, failed, None, ds.raw, ds.pipeline.copy(),
+                                ds.model.copy(), type(ds.fit_options).from_dict(ds.fit_options.to_dict()))
 
     def remember_variant(self):
         ds = self._require_fit()

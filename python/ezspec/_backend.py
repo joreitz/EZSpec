@@ -3,14 +3,17 @@
 >>> from ezspec._backend import core
 >>> core().gaussian(x, 1.0, 0.0, 1.0)
 
-The Rust core is used when available. ``set_backend("python")`` switches to
-the NumPy/SciPy reference implementation (used by the test-suite to compare
-both, and as automatic fallback when the extension is not compiled).
+The Rust core is used when available. ``set_backend("python")`` (or the
+environment variable ``EZSPEC_BACKEND=python``) switches to the NumPy/SciPy
+reference implementation, which is also the automatic fallback when the
+extension is not compiled.
 """
 
 from __future__ import annotations
 
 import contextlib
+import os
+
 import numpy as np
 
 from . import _reference
@@ -22,6 +25,8 @@ except ImportError:  # pragma: no cover
 
 HAVE_RUST = _rust is not None
 _active = _rust if HAVE_RUST else _reference
+if os.environ.get("EZSPEC_BACKEND", "").lower() == "python":   # e.g. to test the fallback path
+    _active = _reference
 
 
 def set_backend(name: str) -> None:

@@ -20,7 +20,11 @@ pub fn minmax(x: &[f64], y: &[f64], n_bins: usize) -> (Vec<f64>, Vec<f64>) {
                 imax = i;
             }
         }
-        let (first, second) = if imin <= imax { (imin, imax) } else { (imax, imin) };
+        let (first, second) = if imin <= imax {
+            (imin, imax)
+        } else {
+            (imax, imin)
+        };
         xo.push(x[first]);
         yo.push(y[first]);
         if second != first {

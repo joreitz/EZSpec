@@ -297,7 +297,8 @@ def format_report(r: FitResult) -> str:
             tag = {"info": "i", "warning": "!", "error": "✗"}.get(w.severity, "!")
             L.append(f"  [{tag}] {w.message}")
     for key, title in (("profile_ci", "Profil-Likelihood-Konfidenzintervalle"),
-                       ("bootstrap", "Bootstrap")):
+                       ("bootstrap", "Bootstrap"),
+                       ("baseline_systematics", "Systematische Unsicherheit durch die Baseline")):
         if key in r.extra:
             L.append("")
             L.append(title)

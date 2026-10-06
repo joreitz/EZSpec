@@ -216,7 +216,10 @@ mod tests {
         for &(g, l) in &[(1.0, 0.0), (1.0, 0.3), (1.0, 1.0), (0.4, 1.0), (0.05, 1.0)] {
             let exact = half_max_width(|x| voigt(x, 1.0, 0.0, g, l), 0.0, g + l);
             let approx = voigt_fwhm(g, l);
-            assert!(((approx - exact) / exact).abs() < 2.5e-4, "g={g} l={l}: {approx} vs {exact}");
+            assert!(
+                ((approx - exact) / exact).abs() < 2.5e-4,
+                "g={g} l={l}: {approx} vs {exact}"
+            );
         }
     }
 
@@ -227,10 +230,21 @@ mod tests {
         // ~1.27 % of the peak height over 1e-3 <= fwhm_l/fwhm_g <= 1e3.
         // A typo in one of the coefficients pushes these bounds far out.
         let x = linspace(-30.0, 30.0, 120_001);
-        for &(g, l) in &[(1.0, 0.01), (1.0, 0.1), (1.0, 0.5), (1.0, 1.0), (0.5, 1.0), (0.1, 1.0), (0.01, 1.0)] {
+        for &(g, l) in &[
+            (1.0, 0.01),
+            (1.0, 0.1),
+            (1.0, 0.5),
+            (1.0, 1.0),
+            (0.5, 1.0),
+            (0.1, 1.0),
+            (0.01, 1.0),
+        ] {
             let exact = half_max_width(|t| voigt(t, 1.0, 0.0, g, l), 0.0, g + l);
             let (w, eta) = tch_width_eta(g, l);
-            assert!(((w - exact) / exact).abs() < 4.5e-3, "g={g} l={l}: {w} vs {exact}");
+            assert!(
+                ((w - exact) / exact).abs() < 4.5e-3,
+                "g={g} l={l}: {w} vs {exact}"
+            );
             assert!((0.0..=1.0).contains(&eta));
             let peak = voigt(0.0, 1.0, 0.0, g, l);
             let worst = x

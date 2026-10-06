@@ -26,7 +26,9 @@ impl Extrapolation {
             "constant" => Ok(Extrapolation::Constant),
             "linear" => Ok(Extrapolation::Linear),
             "polynomial" | "extrapolate" => Ok(Extrapolation::Polynomial),
-            other => Err(CoreError::InvalidParameter(format!("unknown extrapolation '{other}'"))),
+            other => Err(CoreError::InvalidParameter(format!(
+                "unknown extrapolation '{other}'"
+            ))),
         }
     }
 }
@@ -171,20 +173,28 @@ pub fn pchip(x: &[f64], y: &[f64], xq: &[f64], ext: Extrapolation) -> Result<Vec
     Ok(hermite_eval(x, y, &d, xq, ext))
 }
 
-pub fn natural_cubic(x: &[f64], y: &[f64], xq: &[f64], ext: Extrapolation) -> Result<Vec<f64>, CoreError> {
+pub fn natural_cubic(
+    x: &[f64],
+    y: &[f64],
+    xq: &[f64],
+    ext: Extrapolation,
+) -> Result<Vec<f64>, CoreError> {
     let m2 = natural_cubic_second_derivatives(x, y)?;
     let n = x.len();
     let eval = |i: usize, t: f64| {
         let h = x[i + 1] - x[i];
         let a = (x[i + 1] - t) / h;
         let b = (t - x[i]) / h;
-        a * y[i] + b * y[i + 1] + ((a * a * a - a) * m2[i] + (b * b * b - b) * m2[i + 1]) * h * h / 6.0
+        a * y[i]
+            + b * y[i + 1]
+            + ((a * a * a - a) * m2[i] + (b * b * b - b) * m2[i + 1]) * h * h / 6.0
     };
     let slope = |i: usize, t: f64| {
         let h = x[i + 1] - x[i];
         let a = (x[i + 1] - t) / h;
         let b = (t - x[i]) / h;
-        (y[i + 1] - y[i]) / h - (3.0 * a * a - 1.0) * h * m2[i] / 6.0 + (3.0 * b * b - 1.0) * h * m2[i + 1] / 6.0
+        (y[i + 1] - y[i]) / h - (3.0 * a * a - 1.0) * h * m2[i] / 6.0
+            + (3.0 * b * b - 1.0) * h * m2[i + 1] / 6.0
     };
     Ok(xq
         .iter()
@@ -261,7 +271,10 @@ mod tests {
         }
         let ys = vec![0.0, 0.0, 0.0, 1.0, 1.0];
         let v = natural_cubic(&x, &ys, &linspace(0.0, 5.0, 501), Extrapolation::Constant).unwrap();
-        assert!(v.iter().any(|&a| a < -1e-3), "cubic spline should undershoot near a step");
+        assert!(
+            v.iter().any(|&a| a < -1e-3),
+            "cubic spline should undershoot near a step"
+        );
         let p = pchip(&x, &ys, &linspace(0.0, 5.0, 501), Extrapolation::Constant).unwrap();
         assert!(p.iter().all(|&a| (-1e-14..=1.0 + 1e-14).contains(&a)));
     }

@@ -5,6 +5,12 @@
 //! (NumPy/SciPy/pybaselines); the Python test-suite checks that both agree.
 //! The Python side defines what is *correct*, this crate makes it *fast*.
 
+// `!(a > b)` is used deliberately: unlike `a <= b` it is also true for NaN,
+// which is how invalid parameters are rejected.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+// Index loops mirror the formulas of the numerical algorithms.
+#![allow(clippy::needless_range_loop)]
+
 pub mod decimate;
 pub mod error;
 pub mod interp;

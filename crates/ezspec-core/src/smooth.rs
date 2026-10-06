@@ -22,7 +22,9 @@ impl EdgeMode {
             "shrink" => Ok(EdgeMode::Shrink),
             "reflect" => Ok(EdgeMode::Reflect),
             "nearest" => Ok(EdgeMode::Nearest),
-            o => Err(CoreError::InvalidParameter(format!("unknown edge mode '{o}'"))),
+            o => Err(CoreError::InvalidParameter(format!(
+                "unknown edge mode '{o}'"
+            ))),
         }
     }
 }

@@ -4,7 +4,10 @@
 //! `ezspec._backend` guarantees this) and return new arrays. Long-running
 //! iterative routines copy their inputs and release the GIL (`py.detach`).
 
-use ezspec_core::{decimate, interp, lineshapes as ls, noise, rubberband, smooth, snip as snip_mod, whittaker, CoreError};
+use ezspec_core::{
+    decimate, interp, lineshapes as ls, noise, rubberband, smooth, snip as snip_mod, whittaker,
+    CoreError,
+};
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -18,7 +21,11 @@ fn slice<'a>(a: &'a PyReadonlyArray1<'_, f64>, name: &str) -> PyResult<&'a [f64]
         .map_err(|_| PyValueError::new_err(format!("'{name}' must be a contiguous float64 array")))
 }
 
-fn map_shape<'py>(py: Python<'py>, x: &PyReadonlyArray1<'py, f64>, f: impl Fn(f64) -> f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn map_shape<'py>(
+    py: Python<'py>,
+    x: &PyReadonlyArray1<'py, f64>,
+    f: impl Fn(f64) -> f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let xs = slice(x, "x")?;
     let mut out = vec![0.0; xs.len()];
     ls::eval_into(xs, &mut out, f);
@@ -26,37 +33,86 @@ fn map_shape<'py>(py: Python<'py>, x: &PyReadonlyArray1<'py, f64>, f: impl Fn(f6
 }
 
 #[pyfunction]
-fn gaussian<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, area: f64, center: f64, fwhm: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn gaussian<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    area: f64,
+    center: f64,
+    fwhm: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     map_shape(py, &x, |t| ls::gaussian(t, area, center, fwhm))
 }
 
 #[pyfunction]
-fn lorentzian<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, area: f64, center: f64, fwhm: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn lorentzian<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    area: f64,
+    center: f64,
+    fwhm: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     map_shape(py, &x, |t| ls::lorentzian(t, area, center, fwhm))
 }
 
 #[pyfunction]
-fn voigt<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, area: f64, center: f64, fwhm_g: f64, fwhm_l: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn voigt<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    area: f64,
+    center: f64,
+    fwhm_g: f64,
+    fwhm_l: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     map_shape(py, &x, |t| ls::voigt(t, area, center, fwhm_g, fwhm_l))
 }
 
 #[pyfunction]
-fn pseudo_voigt<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, area: f64, center: f64, fwhm: f64, eta: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn pseudo_voigt<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    area: f64,
+    center: f64,
+    fwhm: f64,
+    eta: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     map_shape(py, &x, |t| ls::pseudo_voigt(t, area, center, fwhm, eta))
 }
 
 #[pyfunction]
-fn tch_pseudo_voigt<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, area: f64, center: f64, fwhm_g: f64, fwhm_l: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
-    map_shape(py, &x, |t| ls::tch_pseudo_voigt(t, area, center, fwhm_g, fwhm_l))
+fn tch_pseudo_voigt<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    area: f64,
+    center: f64,
+    fwhm_g: f64,
+    fwhm_l: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    map_shape(py, &x, |t| {
+        ls::tch_pseudo_voigt(t, area, center, fwhm_g, fwhm_l)
+    })
 }
 
 #[pyfunction]
-fn pearson7<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, area: f64, center: f64, fwhm: f64, m: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn pearson7<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    area: f64,
+    center: f64,
+    fwhm: f64,
+    m: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     map_shape(py, &x, |t| ls::pearson7(t, area, center, fwhm, m))
 }
 
 #[pyfunction]
-fn emg<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, area: f64, mu: f64, fwhm_g: f64, tau: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn emg<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    area: f64,
+    mu: f64,
+    fwhm_g: f64,
+    tau: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     map_shape(py, &x, |t| ls::emg(t, area, mu, fwhm_g, tau))
 }
 
@@ -71,17 +127,35 @@ fn tch_width_eta(fwhm_g: f64, fwhm_l: f64) -> (f64, f64) {
 }
 
 #[pyfunction]
-fn whittaker_smooth<'py>(py: Python<'py>, y: PyReadonlyArray1<'py, f64>, weights: PyReadonlyArray1<'py, f64>, lam: f64, diff_order: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn whittaker_smooth<'py>(
+    py: Python<'py>,
+    y: PyReadonlyArray1<'py, f64>,
+    weights: PyReadonlyArray1<'py, f64>,
+    lam: f64,
+    diff_order: usize,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let y = slice(&y, "y")?.to_vec();
     let w = slice(&weights, "weights")?.to_vec();
-    let z = py.detach(move || whittaker::whittaker_smooth(&y, &w, lam, diff_order)).map_err(to_py)?;
+    let z = py
+        .detach(move || whittaker::whittaker_smooth(&y, &w, lam, diff_order))
+        .map_err(to_py)?;
     Ok(z.into_pyarray(py))
 }
 
-type BaselineOut<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>, bool);
+type BaselineOut<'py> = (
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    bool,
+);
 
 fn baseline_out(py: Python<'_>, r: whittaker::BaselineFit) -> BaselineOut<'_> {
-    (r.baseline.into_pyarray(py), r.weights.into_pyarray(py), r.tol_history.into_pyarray(py), r.converged)
+    (
+        r.baseline.into_pyarray(py),
+        r.weights.into_pyarray(py),
+        r.tol_history.into_pyarray(py),
+        r.converged,
+    )
 }
 
 fn opt_vec(a: &Option<PyReadonlyArray1<'_, f64>>, name: &str) -> PyResult<Option<Vec<f64>>> {
@@ -110,7 +184,18 @@ fn asls<'py>(
     let w0 = opt_vec(&weights, "weights")?;
     let fx = opt_vec(&fixed, "fixed")?;
     let r = py
-        .detach(move || whittaker::asls(&y, lam, p, diff_order, max_iter, tol, w0.as_deref(), fx.as_deref()))
+        .detach(move || {
+            whittaker::asls(
+                &y,
+                lam,
+                p,
+                diff_order,
+                max_iter,
+                tol,
+                w0.as_deref(),
+                fx.as_deref(),
+            )
+        })
         .map_err(to_py)?;
     Ok(baseline_out(py, r))
 }
@@ -133,21 +218,43 @@ fn arpls<'py>(
     let w0 = opt_vec(&weights, "weights")?;
     let fx = opt_vec(&fixed, "fixed")?;
     let r = py
-        .detach(move || whittaker::arpls(&y, lam, diff_order, max_iter, tol, w0.as_deref(), fx.as_deref()))
+        .detach(move || {
+            whittaker::arpls(
+                &y,
+                lam,
+                diff_order,
+                max_iter,
+                tol,
+                w0.as_deref(),
+                fx.as_deref(),
+            )
+        })
         .map_err(to_py)?;
     Ok(baseline_out(py, r))
 }
 
 #[pyfunction]
 #[pyo3(signature = (y, max_half_window, decreasing=false, filter_order=2))]
-fn snip<'py>(py: Python<'py>, y: PyReadonlyArray1<'py, f64>, max_half_window: usize, decreasing: bool, filter_order: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn snip<'py>(
+    py: Python<'py>,
+    y: PyReadonlyArray1<'py, f64>,
+    max_half_window: usize,
+    decreasing: bool,
+    filter_order: usize,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let y = slice(&y, "y")?.to_vec();
-    let b = py.detach(move || snip_mod::snip(&y, max_half_window, decreasing, filter_order)).map_err(to_py)?;
+    let b = py
+        .detach(move || snip_mod::snip(&y, max_half_window, decreasing, filter_order))
+        .map_err(to_py)?;
     Ok(b.into_pyarray(py))
 }
 
 #[pyfunction(name = "rubberband")]
-fn rubberband_py<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, y: PyReadonlyArray1<'py, f64>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn rubberband_py<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    y: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let b = rubberband::rubberband(slice(&x, "x")?, slice(&y, "y")?).map_err(to_py)?;
     Ok(b.into_pyarray(py))
 }
@@ -173,25 +280,48 @@ fn interp_common<'py>(
 
 #[pyfunction]
 #[pyo3(signature = (x, y, xq, extrapolation="constant"))]
-fn pchip<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, y: PyReadonlyArray1<'py, f64>, xq: PyReadonlyArray1<'py, f64>, extrapolation: &str) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn pchip<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    y: PyReadonlyArray1<'py, f64>,
+    xq: PyReadonlyArray1<'py, f64>,
+    extrapolation: &str,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     interp_common(py, "pchip", x, y, xq, extrapolation)
 }
 
 #[pyfunction]
 #[pyo3(signature = (x, y, xq, extrapolation="constant"))]
-fn natural_cubic<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, y: PyReadonlyArray1<'py, f64>, xq: PyReadonlyArray1<'py, f64>, extrapolation: &str) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn natural_cubic<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    y: PyReadonlyArray1<'py, f64>,
+    xq: PyReadonlyArray1<'py, f64>,
+    extrapolation: &str,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     interp_common(py, "cubic", x, y, xq, extrapolation)
 }
 
 #[pyfunction]
 #[pyo3(signature = (x, y, xq, extrapolation="constant"))]
-fn linear_interp<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, y: PyReadonlyArray1<'py, f64>, xq: PyReadonlyArray1<'py, f64>, extrapolation: &str) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn linear_interp<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    y: PyReadonlyArray1<'py, f64>,
+    xq: PyReadonlyArray1<'py, f64>,
+    extrapolation: &str,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     interp_common(py, "linear", x, y, xq, extrapolation)
 }
 
 #[pyfunction]
 #[pyo3(signature = (y, half_window, mode="shrink"))]
-fn moving_average<'py>(py: Python<'py>, y: PyReadonlyArray1<'py, f64>, half_window: usize, mode: &str) -> PyResult<Bound<'py, PyArray1<f64>>> {
+fn moving_average<'py>(
+    py: Python<'py>,
+    y: PyReadonlyArray1<'py, f64>,
+    half_window: usize,
+    mode: &str,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let m = smooth::EdgeMode::parse(mode).map_err(to_py)?;
     Ok(smooth::moving_average(slice(&y, "y")?, half_window, m).into_pyarray(py))
 }
@@ -201,8 +331,15 @@ fn der_snr(y: PyReadonlyArray1<'_, f64>) -> PyResult<f64> {
     Ok(noise::der_snr(slice(&y, "y")?))
 }
 
+type ArrayPair<'py> = (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>);
+
 #[pyfunction]
-fn minmax_decimate<'py>(py: Python<'py>, x: PyReadonlyArray1<'py, f64>, y: PyReadonlyArray1<'py, f64>, n_bins: usize) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>)> {
+fn minmax_decimate<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray1<'py, f64>,
+    y: PyReadonlyArray1<'py, f64>,
+    n_bins: usize,
+) -> PyResult<ArrayPair<'py>> {
     let (xo, yo) = decimate::minmax(slice(&x, "x")?, slice(&y, "y")?, n_bins);
     Ok((xo.into_pyarray(py), yo.into_pyarray(py)))
 }

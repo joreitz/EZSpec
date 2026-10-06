@@ -292,3 +292,20 @@ def test_serialisation_roundtrip():
     import json
     json.dumps(d)
     assert d["statistics"]["covariance_mode"] == "scaled"
+
+
+def test_baseline_systematics_reports_spread():
+    from ezspec.examples import raman_example
+    from ezspec.fit import baseline_systematics
+    from ezspec.pipeline import Pipeline
+    raw = raman_example(spike=False)
+    p = Pipeline()
+    p.add("baseline_arpls", {"lam": 1e7})
+    m = Model()
+    add_peak(m, "lorentzian", 1602, 37, 12)
+    opts = FitOptions(x_range=[1500, 1700])
+    res = baseline_systematics(raw, p, m, opts)
+    assert res["variants"] == [3e6, 1e7, 3e7]
+    area = res["table"]["p1_area"]
+    assert len(area["values"]) == 3 and area["systematic"] >= 0
+    assert any("syst., Baseline" in line for line in res["summary"])

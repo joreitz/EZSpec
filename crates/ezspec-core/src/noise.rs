@@ -14,7 +14,9 @@ pub fn der_snr(y: &[f64]) -> f64 {
     if n < 5 {
         return f64::NAN;
     }
-    let d: Vec<f64> = (2..n - 2).map(|i| (2.0 * y[i] - y[i - 2] - y[i + 2]).abs()).collect();
+    let d: Vec<f64> = (2..n - 2)
+        .map(|i| (2.0 * y[i] - y[i - 2] - y[i + 2]).abs())
+        .collect();
     0.605_269_7 * median(&d)
 }
 
@@ -28,7 +30,9 @@ mod tests {
         let mut rng = Rng::new(11);
         let n = 200_000;
         let sigma = 0.37;
-        let y: Vec<f64> = (0..n).map(|i| 4.0 + 1e-3 * i as f64 + sigma * rng.normal()).collect();
+        let y: Vec<f64> = (0..n)
+            .map(|i| 4.0 + 1e-3 * i as f64 + sigma * rng.normal())
+            .collect();
         let est = der_snr(&y);
         // relative standard error of a median-based estimate at this n is < 0.5 %
         assert!((est / sigma - 1.0).abs() < 0.01, "{est}");
