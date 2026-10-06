@@ -17,6 +17,7 @@ Qt-Oberfläche (PySide6 + pyqtgraph), Publikationsfiguren mit matplotlib.
 | Unsicherheiten | Volle Fehlerfortpflanzung für abgeleitete Größen (Höhe, exakte Voigt-FWHM, Fläche, Flächenanteile). Dazu Profil-Likelihood-CIs, Residuen- und Wild-Bootstrap, MCMC-Posterior (emcee, optional) sowie systematische Baseline-Unsicherheit über λ-Variation. |
 | Modelle | Flächennormierte Peaks (Gauß, Lorentz, exakter Voigt, Pseudo-Voigt, TCH, Pearson VII, EMG), linear mitfittbare Untergründe, klassische Funktionen und eigene Formeln mit beliebig vielen Parametern und unabhängigen Variablen. Constraints wie `p2_fwhm = p1_fwhm`. |
 | Serien | Serienfits mit Startwert-Weitergabe, globale Fits mit geteilten Parametern, Parameter-vs-Index-Plot. |
+| Daten verrechnen | Neue Datensätze per Formel aus mehreren Messreihen, z. B. y = a/b oder x = a/b, y = c. Die Ausrichtung wird automatisch erkannt (identisches Raster, punktweise bei gleichzeitiger Aufnahme oder Interpolation mit Warnung). σ wird fortgepflanzt, auch für mehrfach verwendete Größen. Hängt das neue x von Messwerten ab, wird σ_x mitgeführt, der Fit warnt, und die Gewichtung „effektive Varianz“ berücksichtigt σ_x. |
 | Reproduzierbarkeit | Einzeldatei-Projekt (Zip) mit bytegenauen Rohdaten. Skript-Export reproduziert Pipeline, Fit und Figur bitgenau aus den Rohdaten, geprüft per SHA-256. |
 | Figuren | Deklarative Figure-Spec (JSON) und matplotlib-Renderer mit Journal-Vorlagen in mm/pt, Vorschau in physischer Größe, 2. x-Achse (nm ↔ eV ↔ cm⁻¹), Parameterbox, Petroff-Farbzyklus, editierbarer Text im PDF. |
 
@@ -51,7 +52,11 @@ Ohne kompilierten Kern läuft alles mit der NumPy/SciPy-Referenzimplementierung
 4. **Ergebnis**: Statistik mit Erklärungen (Tooltips), Warnungen, abgeleitete Größen, Korrelationsmatrix,
    Residuendiagnose, Textbericht. Dazu *Profil-CI*, *Bootstrap*, Baseline-Systematik, Varianten merken
    und vergleichen (ΔAICc, Akaike-Gewichte).
-5. **Export**: *Datei → Exportieren*: Abbildung (Editor mit Journal-Vorlagen), Ergebnistabellen
+5. **Daten verrechnen** (*Analyse → Daten verrechnen*, Strg+K, oder *Verrechnen…* im Daten-Dock):
+   Datensätze erhalten Kurznamen (a, b, c, …). Neue x- und y-Achse sind beliebige Formeln dieser Namen;
+   `x` ist das gemeinsame x, `x_a` das x von Datensatz a. Diagnose und Vorschau laufen live; das Ergebnis
+   wird ein neuer Datensatz mit eigener Pipeline und eigenem Fit.
+6. **Export**: *Datei → Exportieren*: Abbildung (Editor mit Journal-Vorlagen), Ergebnistabellen
    (CSV/JSON/Bericht), Python-Skript. *Analyse → Serie / globaler Fit* (Strg+G).
 
 ## Skript-API
@@ -81,6 +86,7 @@ profile_ci(r)                                         # asymmetrische Konfidenzi
 Weitere Einstiegspunkte: `ezspec.Pipeline` (Schritte, Serialisierung, Caching),
 `ezspec.fit.fit_series`, `ezspec.fit.fit_global`, `ezspec.fit.compare`,
 `ezspec.fit.baseline_systematics`, `ezspec.fit.simulate_nested_test`, `ezspec.fit.mcmc`,
+`ezspec.combine.combine` (Datensätze verrechnen),
 `ezspec.project.Project`,
 `ezspec.export.figure` und `ezspec.export.script.generate_script`.
 

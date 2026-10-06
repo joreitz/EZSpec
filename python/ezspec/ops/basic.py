@@ -138,6 +138,8 @@ def convert_x(s: Spectrum, to, from_unit, laser_nm, spectral_density) -> Spectru
         J = np.ones(s.n)
     sig = None if s.sigma is None else s.sigma * J
     aux = {k: (v * J if k in Y_LEVEL_AUX + Y_DIFFERENCE_AUX else v) for k, v in s.aux.items()}
+    if "sigma_x" in aux:          # dx_new = dx_old * |dx_new/dx_old| = dx_old / |dx_old/dx_new|
+        aux["sigma_x"] = aux["sigma_x"] / units.jacobian(s.x, src, to, laser_nm)
     out = s.replace(x=xn, y=s.y * J, sigma=sig, aux=aux, x_unit=to, x_label=units.AXIS_LABELS[to])
     if spectral_density:
         out = out.with_flags("jacobian")

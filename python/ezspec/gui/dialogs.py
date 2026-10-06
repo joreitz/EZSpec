@@ -816,3 +816,174 @@ class SeriesDialog(QtWidgets.QDialog):
         else:
             from ..export.results import write_parameters_csv
             write_parameters_csv(self.global_result, path)
+
+
+# ============================================================================ combine datasets
+class CombineDialog(QtWidgets.QDialog):
+    """Compute a new dataset from several datasets (ratio, difference, parametric x/y)."""
+
+    PRESETS = [("a / b", "x", "a/b"), ("a − b", "x", "a - b"), ("a + b", "x", "a + b"), ("a · b", "x", "a*b"),
+               ("(a/b) als x, c als y", "a/b", "c"), ("b gegen a (parametrisch)", "a", "b")]
+
+    def __init__(self, state, parent=None):
+        import pyqtgraph as pg
+
+        from ..combine import default_aliases
+        super().__init__(parent)
+        self.setWindowTitle("Daten verrechnen")
+        self.state = state
+        self.result = None
+        self.report = None
+        ds_list = state.project.datasets
+        aliases = default_aliases(len(ds_list))
+        lay = QtWidgets.QHBoxLayout(self)
+        left = QtWidgets.QVBoxLayout()
+        self.table = QtWidgets.QTableWidget(len(ds_list), 5)
+        self.table.setHorizontalHeaderLabels(["nutzen", "Kurzname", "Datensatz", "N / x-Bereich", "σ"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        current = state.current_id
+        for i, ds in enumerate(ds_list):
+            s = ds.processed
+            use = QtWidgets.QTableWidgetItem()
+            use.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
+            use.setCheckState(QtCore.Qt.Checked if len(ds_list) <= 3 or ds.id == current else QtCore.Qt.Unchecked)
+            use.setData(QtCore.Qt.UserRole, ds.id)
+            self.table.setItem(i, 0, use)
+            self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(aliases[i]))
+            for j, txt in ((2, ds.name), (3, f"{s.n} / {s.x.min():.5g} … {s.x.max():.5g}" if s.n else "leer"),
+                           (4, s.sigma_source.label)):
+                it = QtWidgets.QTableWidgetItem(txt)
+                it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
+                self.table.setItem(i, j, it)
+        self.table.resizeColumnsToContents()
+        left.addWidget(self.table, 2)
+        form = QtWidgets.QFormLayout()
+        self.stage = QtWidgets.QComboBox()
+        self.stage.addItem("verarbeitet (nach Pipeline)", "processed")
+        self.stage.addItem("Rohdaten", "raw")
+        self.mode = QtWidgets.QComboBox()
+        for k, v in (("auto", "automatisch"), ("exact", "identisches x-Raster"),
+                     ("index", "punktweise (gleichzeitig aufgenommen)"),
+                     ("interpolate", "Interpolation auf Referenz")):
+            self.mode.addItem(v, k)
+        self.ref = QtWidgets.QLineEdit("")
+        self.ref.setPlaceholderText("Kurzname der Referenz (leer = erster)")
+        presets = QtWidgets.QHBoxLayout()
+        for title, xe, ye in self.PRESETS:
+            b = QtWidgets.QToolButton()
+            b.setText(title)
+            b.clicked.connect(lambda _=False, xe=xe, ye=ye: (self.xexpr.setText(xe), self.yexpr.setText(ye)))
+            presets.addWidget(b)
+        self.xexpr = QtWidgets.QLineEdit("x")
+        self.yexpr = QtWidgets.QLineEdit("a/b" if len(ds_list) > 1 else "a")
+        for e in (self.xexpr, self.yexpr):
+            e.setToolTip("Namen: Kurznamen (y-Werte), x (gemeinsames x), x_<Kurzname> (x des Datensatzes); "
+                         "Funktionen wie in Formeln (exp, log, sqrt, …)")
+        self.xlabel = QtWidgets.QLineEdit()
+        self.ylabel = QtWidgets.QLineEdit()
+        self.name = QtWidgets.QLineEdit()
+        form.addRow("Datenstand", self.stage)
+        form.addRow("Ausrichtung", self.mode)
+        form.addRow("Referenz", self.ref)
+        form.addRow("Vorlagen", presets)
+        form.addRow("neue x =", self.xexpr)
+        form.addRow("neue y =", self.yexpr)
+        form.addRow("x-Titel", self.xlabel)
+        form.addRow("y-Titel", self.ylabel)
+        form.addRow("Name", self.name)
+        left.addLayout(form)
+        self.info = QtWidgets.QLabel()
+        self.info.setWordWrap(True)
+        left.addWidget(self.info, 1)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.button(QtWidgets.QDialogButtonBox.Ok).setText("Als neuen Datensatz anlegen")
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+        self.ok = bb.button(QtWidgets.QDialogButtonBox.Ok)
+        left.addWidget(bb)
+        lay.addLayout(left, 3)
+        self.pw = pg.PlotWidget()
+        self.pw.showGrid(x=True, y=True, alpha=0.2)
+        lay.addWidget(self.pw, 2)
+        self._timer = QtCore.QTimer(self, singleShot=True, interval=150)
+        self._timer.timeout.connect(self.update_preview)
+        for w in (self.xexpr, self.yexpr, self.ref):
+            w.textChanged.connect(lambda _t: self._timer.start())
+        for w in (self.stage, self.mode):
+            w.currentIndexChanged.connect(lambda _i: self._timer.start())
+        self.table.itemChanged.connect(lambda _it: self._timer.start())
+        self.resize(1150, 640)
+        self.update_preview()
+
+    def selection(self) -> dict:
+        out = {}
+        for i in range(self.table.rowCount()):
+            if self.table.item(i, 0).checkState() != QtCore.Qt.Checked:
+                continue
+            ds = self.state.project.get(self.table.item(i, 0).data(QtCore.Qt.UserRole))
+            alias = self.table.item(i, 1).text().strip()
+            out[alias] = ds.processed if self.stage.currentData() == "processed" else ds.raw
+        return out
+
+    def update_preview(self):
+        from ..combine import combine, diagnose_alignment
+        import pyqtgraph as pg
+        self.pw.clear()
+        self.result = None
+        try:
+            sel = self.selection()
+            if not sel:
+                raise ValueError("mindestens einen Datensatz auswählen")
+            diag = diagnose_alignment(list(sel.values()))
+            out, rep = combine(sel, self.xexpr.text(), self.yexpr.text(), self.mode.currentData(),
+                               self.ref.text().strip() or None, self.xlabel.text(), self.ylabel.text(),
+                               self.name.text())
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            self.info.setText(f"<span style='color:#b3261e'>✖ {e}</span>")
+            self.ok.setEnabled(False)
+            return
+        self.result, self.report = out, rep
+        lines = [f"<b>Ausrichtung (automatisch erkannt):</b> {diag['text']}" if self.mode.currentData() == "auto"
+                 else f"<b>Ausrichtung:</b> {rep['alignment']}",
+                 f"<b>Ergebnis:</b> {rep['n_output']} von {rep['n_input']} Punkten · σ: "
+                 f"{'fortgepflanzt (' + out.sigma_source.label + ')' if out.sigma is not None else 'keins'}"
+                 f"{' · σ_x vorhanden' if 'sigma_x' in out.aux else ''}"]
+        lines += [f"<span style='color:#b36b00'>⚠ {w}</span>" for w in rep["warnings"]]
+        self.info.setText("<br>".join(lines))
+        self.ok.setEnabled(out.n > 1)
+        scatter = out.meta.get("plot_style") == "scatter"
+        if out.sigma is not None and out.n < 3000:
+            self.pw.addItem(pg.ErrorBarItem(x=out.x, y=out.y, height=2 * out.sigma, pen=pg.mkPen("#9db6e0")))
+        self.pw.plot(out.x, out.y, pen=None if scatter else pg.mkPen("#2b2b2b"),
+                     symbol="o" if scatter else None, symbolSize=4, symbolBrush="#2b2b2b", symbolPen=None)
+        self.pw.setLabel("bottom", out.x_label)
+        self.pw.setLabel("left", out.y_label)
+
+    def _accept(self):
+        import hashlib
+
+        from ..project import Dataset
+        if self.result is None:
+            return
+        out = self.result
+        name = out.meta.get("name") or "verrechnet"
+        cols = ["x", "y"] + (["sigma"] if out.sigma is not None else [])
+        arrays = [out.x, out.y] + ([out.sigma] if out.sigma is not None else [])
+        text = ",".join(cols) + "\n" + "\n".join(",".join(repr(float(v)) for v in row) for row in zip(*arrays)) + "\n"
+        data = text.encode("utf-8")
+        fname = re_safe(name) + ".csv"
+        meta = dict(out.meta)
+        meta["source"] = {"filename": fname, "path": fname, "sha256": hashlib.sha256(data).hexdigest(),
+                          "reader": "text", "options": {"x_col": 0, "y_col": 1,
+                                                        "sigma_col": 2 if out.sigma is not None else None,
+                                                        "delimiter": ",", "decimal": "."}}
+        ds = Dataset(name=name, raw=out.replace(meta=meta), raw_bytes=data, raw_ext=".csv")
+        ds.notes = "abgeleitet: x = {x_expr}, y = {y_expr}".format(**out.meta["derived"])
+        self.state.add_dataset(ds)
+        self.accept()
+
+
+def re_safe(name: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "verrechnet"

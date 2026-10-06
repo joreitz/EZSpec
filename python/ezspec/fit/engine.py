@@ -244,6 +244,13 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         sigma = None
         source = SigmaSource.UNKNOWN
         sigma_label = SigmaSource.UNKNOWN.label + " (Einheitsgewichte)"
+    elif weighting == "effective_variance":
+        if spectrum.sigma is None or "sigma_x" not in spectrum.aux:
+            raise FitError("Effektive Varianz braucht σ_y und σ_x (z. B. aus 'Daten verrechnen')")
+        sigma = spectrum.sigma[mask].astype(float)
+        sigma_x = np.asarray(spectrum.aux["sigma_x"], float)[mask]
+        source = spectrum.sigma_source
+        sigma_label = source.label + " + σ_x (effektive Varianz, Orear 1982)"
     elif weighting == "poisson_model":
         sigma = None
         source = None
@@ -256,7 +263,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
                                        "Zählraten (Baseline abgezogen/normiert)."))
     else:
         raise FitError(f"unbekannte Gewichtung {weighting!r}")
-    sigma_known = weighting in ("sigma", "poisson_model")
+    sigma_known = weighting in ("sigma", "poisson_model", "effective_variance")
 
     # ---------------------------------------------------------------- covariance mode
     cov_mode = opt.covariance
@@ -281,6 +288,9 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
                          "Punkte korreliert, effektives N kleiner; χ² und Fehler nicht exakt.", "warning"),
         "normalized": ("NORMALIZED_INPUT", "Daten normiert: Amplituden/Flächen beziehen sich auf die "
                        "normierte Skala.", "info"),
+        "x_uncertain": ("X_UNCERTAIN", "x-Werte haben eine Unsicherheit (σ_x, z. B. aus Verrechnung von "
+                        "Messreihen). Gewöhnliche kleinste Quadrate ignorieren σ_x; Gewichtung 'effektive Varianz' "
+                        "berücksichtigt sie.", "warning"),
         "baseline_subtracted": ("BASELINE_UNCERTAINTY", "Vorab abgezogene Baseline: deren Unsicherheit ist "
                                 "nicht in den Fehlern enthalten (systematisch; z. B. λ variieren oder "
                                 "lineare Baseline mitfitten).", "info"),
@@ -357,6 +367,29 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
             # final fit with converged weights so covariance corresponds to sigma^2 = model
             mini, res, residual, method_used = run_once(current, w)
             sigma = 1.0 / w
+        elif weighting == "effective_variance":
+            sigma_y = sigma
+            w = 1.0 / sigma_y
+            current = params
+            span = float(np.ptp(x)) or 1.0
+            for _ in range(opt.poisson_max_iter):
+                mini, res, residual, method_used = run_once(current, w)
+                h = 1e-6 * span
+                fp = (model.evaluate(x + h, res.params, variables) - model.evaluate(x - h, res.params, variables)) \
+                    / (2 * h)
+                w_new = 1.0 / np.sqrt(sigma_y ** 2 + (fp * sigma_x) ** 2)
+                change = np.max(np.abs(w_new - w) / w)
+                w = w_new
+                current = res.params
+                if change < 1e-8:
+                    break
+            else:
+                warnings.append(FitWarning("EV_NOT_CONVERGED", "Effektive-Varianz-Iteration nicht konvergiert."))
+            mini, res, residual, method_used = run_once(current, w)
+            sigma = 1.0 / w
+            warnings = [w_ for w_ in warnings if w_.code != "X_UNCERTAIN"]
+            warnings.append(FitWarning("EFFECTIVE_VARIANCE", "σ_x über effektive Varianz berücksichtigt (Näherung "
+                                       "erster Ordnung an Fehler-in-beiden-Variablen; gut für kleine σ_x).", "info"))
         else:
             w = 1.0 / sigma if sigma is not None else np.ones_like(y)
             mini, res, residual, method_used = run_once(params, w)

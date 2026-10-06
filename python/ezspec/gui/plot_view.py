@@ -159,7 +159,8 @@ class PlotView(QtWidgets.QWidget):
 
     # ================================================================ scene
     def set_scene(self, *, data, input=None, excluded=None, baseline=None, smoothed=None, fit=None,
-                  fit_stale=False, components=(), preview=None, residuals=None, x_label="", y_label=""):
+                  fit_stale=False, components=(), preview=None, residuals=None, x_label="", y_label="",
+                  scatter=False):
         def setc(item, xy):
             if xy is None:
                 item.setData([], [])
@@ -172,6 +173,15 @@ class PlotView(QtWidgets.QWidget):
         if len(x):
             self._x_extent = (float(np.min(x)), float(np.max(x)))
         setc(self.c_data, data)
+        if scatter:          # parametric / derived data: points instead of a connecting line
+            self.c_data.setPen(None)
+            self.c_data.setSymbol("o")
+            self.c_data.setSymbolSize(4)
+            self.c_data.setSymbolBrush(pg.mkBrush(COLORS["data"]))
+            self.c_data.setSymbolPen(None)
+        else:
+            self.c_data.setPen(pg.mkPen(COLORS["data"], width=1.2))
+            self.c_data.setSymbol(None)
         setc(self.c_input, input)
         if excluded is not None and len(excluded[0]):
             self.c_excl.setData(excluded[0], excluded[1])

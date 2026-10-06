@@ -18,7 +18,7 @@ from ..models import add_peak, find_peaks
 from ..ops.baseline import anchor_values
 from ..project import Dataset, Project
 from . import peak_edit
-from .dialogs import BootstrapDialog, CompareDialog, FigureDialog, ImportDialog, SeriesDialog
+from .dialogs import BootstrapDialog, CombineDialog, CompareDialog, FigureDialog, ImportDialog, SeriesDialog
 from .model_panel import ModelPanel
 from .pipeline_panel import DatasetsPanel, PipelinePanel
 from .plot_view import PlotView
@@ -56,6 +56,8 @@ Bereich (Masken, Pflichtbereiche, Rausch-/Fitbereich) · Peak.</li>
 <li><b>Modell</b>: Werkzeug Peak (Klick = neuer Peak; Marker ziehen = Lage/Höhe/Breite), „Peaks finden“,
 „+ Komponente“ (Untergrund, klassische Funktion, eigene Formel). Tabelle: Start, Grenzen, frei, Ausdruck.</li>
 <li><b>Fit</b>: Strg+R. Ergebnis-Panel: Statistik, Warnungen, abgeleitete Größen, Korrelationen, Residuen.</li>
+<li><b>Verrechnen</b>: Strg+K – Quotient, Differenz oder beliebige x/y-Formeln aus mehreren Datensätzen
+(σ wird fortgepflanzt, Ausrichtung automatisch geprüft).</li>
 <li><b>Vertiefen</b>: Profil-CI, Bootstrap, MCMC, Baseline-Systematik, Varianten vergleichen, Serie/global (Strg+G).</li>
 <li><b>Export</b>: Abbildung (Strg+E), Tabellen, Python-Skript (reproduziert alles aus den Rohdaten).</li>
 </ol>
@@ -181,6 +183,8 @@ class MainWindow(QtWidgets.QMainWindow):
         a.addAction("Baseline-Systematik (λ/Fenster variieren)", self.run_systematics)
         a.addAction("MCMC-Posterior (emcee)…", self.run_mcmc)
         a.addSeparator()
+        a.addAction("Daten verrechnen (Quotient, Differenz, x/y-Formeln)…", self.combine_dialog,
+                    QtGui.QKeySequence("Ctrl+K"))
         a.addAction("Serie / globaler Fit…", self.series_dialog, QtGui.QKeySequence("Ctrl+G"))
         a.addSeparator()
         a.addAction("Fit als Variante merken", self.remember_variant)
@@ -224,6 +228,7 @@ class MainWindow(QtWidgets.QMainWindow):
         st.projectChanged.connect(self._update_title)
         self.datasets_panel.importRequested.connect(self.import_data)
         self.datasets_panel.exampleRequested.connect(lambda: self.load_example("raman"))
+        self.datasets_panel.combineRequested.connect(self.combine_dialog)
         self.pipeline_panel.rangeTargetChanged.connect(self.plot.set_range_target)
         self.model_panel.fitRequested.connect(self.run_fit)
         self.model_panel.autoPeaksRequested.connect(self.auto_peaks)
@@ -325,7 +330,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 preview = None
         self.plot.set_scene(data=(s.x, s.y), excluded=excluded, smoothed=smoothed, fit=fit_xy,
                             fit_stale=not current, components=comps or (), preview=preview, residuals=resid,
-                            x_label=xl, y_label=s.y_label)
+                            x_label=xl, y_label=s.y_label, scatter=s.meta.get("plot_style") == "scatter")
         handles = []
         vals = self._values_for_handles(ds)
         if vals is not None and ds.model.peaks:
@@ -660,6 +665,12 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Bootstrap", msg.split("\n\n")[0])
         self._task = start_task(bootstrap, done, failed, None, ds.fit_result, dlg.n.value(),
                                 dlg.kind.currentData(), dlg.seed.value())
+
+    def combine_dialog(self):
+        if not self.state.project.datasets:
+            QtWidgets.QMessageBox.information(self, "Verrechnen", "Zuerst Daten importieren.")
+            return
+        CombineDialog(self.state, self).exec()
 
     def series_dialog(self):
         if len(self.state.project.datasets) < 2:

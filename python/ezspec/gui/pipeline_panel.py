@@ -15,6 +15,7 @@ CATEGORY_ORDER = ["Bereich", "Korrektur", "Baseline", "Glätten", "Unsicherheit"
 class DatasetsPanel(QtWidgets.QWidget):
     importRequested = QtCore.Signal()
     exampleRequested = QtCore.Signal()
+    combineRequested = QtCore.Signal()
 
     def __init__(self, state, parent=None):
         super().__init__(parent)
@@ -29,6 +30,8 @@ class DatasetsPanel(QtWidgets.QWidget):
         row = QtWidgets.QHBoxLayout()
         for text, slot, tip in (("Importieren…", self.importRequested.emit, "Text/CSV oder JCAMP-DX laden"),
                                 ("Beispiel", self.exampleRequested.emit, "synthetisches Raman-Spektrum laden"),
+                                ("Verrechnen…", self.combineRequested.emit,
+                                 "Quotient/Differenz/Formeln aus mehreren Datensätzen (Strg+K)"),
                                 ("Duplizieren", self._duplicate, "Kopie mit gleicher Pipeline und Modell"),
                                 ("Entfernen", self._remove, "Datensatz entfernen (rückgängig machbar)")):
             b = QtWidgets.QPushButton(text)

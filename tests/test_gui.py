@@ -290,3 +290,35 @@ def test_entry_point_starts_imports_and_quits(tmp_path):
     res = subprocess.run([sys.executable, str(script), str(f)], capture_output=True, text=True, timeout=120,
                          env=env)
     assert "RESULT 0 1" in res.stdout, res.stdout + res.stderr
+
+
+def test_combine_dialog_creates_derived_dataset(app, win):
+    from ezspec.gui.dialogs import CombineDialog
+    from ezspec.project import Dataset
+    w = win
+    t = np.linspace(0, 10, 101)
+    for name, y in (("U", 2 + 0.5 * t), ("I", 0.4 + 0.1 * t)):
+        data = ("t,val,sig\n" + "\n".join(f"{a!r},{b!r},0.01" for a, b in zip(t.tolist(), y.tolist()))).encode()
+        ds = Dataset.from_bytes(data, f"{name}.csv", y_cols=[1], sigma_col=2)
+        ds.name = name
+        w.state.add_dataset(ds)
+    pump(app)
+    dlg = CombineDialog(w.state, w)
+    for i in range(dlg.table.rowCount()):        # use only U (alias b) and I (alias c)
+        name = dlg.table.item(i, 2).text()
+        dlg.table.item(i, 0).setCheckState(QtCore.Qt.Checked if name in ("U", "I") else QtCore.Qt.Unchecked)
+    dlg.yexpr.setText("b/c")
+    dlg.name.setText("R")
+    dlg.update_preview()
+    assert dlg.result is not None and dlg.result.sigma is not None, dlg.info.text()
+    assert "identisches x-Raster" in dlg.info.text()
+    n_before = len(w.state.project.datasets)
+    dlg._accept()
+    pump(app)
+    new = w.state.current()
+    assert len(w.state.project.datasets) == n_before + 1 and new.name == "R"
+    np.testing.assert_allclose(new.raw.y, (2 + 0.5 * t) / (0.4 + 0.1 * t))
+    dlg2 = CombineDialog(w.state, w)
+    dlg2.xexpr.setText("nonsense_name")
+    dlg2.update_preview()
+    assert dlg2.result is None and "unbekannte Namen" in dlg2.info.text()

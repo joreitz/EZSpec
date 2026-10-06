@@ -14,7 +14,8 @@ from .theme import SEVERITY_COLOR
 
 PEAK_KINDS = [k for k, t in COMPONENT_TYPES.items() if t.category == "peak"]
 WEIGHTING = [("auto", "automatisch (σ falls vorhanden)"), ("sigma", "σ der Daten"),
-             ("none", "keine (σ unbekannt)"), ("poisson_model", "Poisson: σ² = Modell (Zählraten)")]
+             ("none", "keine (σ unbekannt)"), ("poisson_model", "Poisson: σ² = Modell (Zählraten)"),
+             ("effective_variance", "effektive Varianz (σ_y und σ_x)")]
 COVARIANCE = [("auto", "automatisch"), ("absolute", "absolut (σ bekannt)"), ("scaled", "skaliert mit √χ²_ν")]
 
 
