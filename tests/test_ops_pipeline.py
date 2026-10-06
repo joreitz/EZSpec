@@ -152,3 +152,24 @@ def test_pipeline_run_cache_serialisation_and_errors():
     assert not r.ok and "fewer than 2" in r.results[-1].error
     lines = q.script_lines()
     assert lines[0].startswith("s = ops.crop(s, xmin=450.0")
+
+
+def test_transformations_leave_independent_variables_and_weights_alone():
+    x = np.linspace(400, 800, 200)
+    s = spectrum(x, 2 + np.sin(x / 30), aux={"var:T": np.linspace(280, 320, 200)}, x_unit="nm")
+    b = ops.baseline_asls(s, lam=1e5, p=0.01)
+    w = b.aux["baseline_weights"].copy()
+    n = ops.normalize(b, method="max")
+    np.testing.assert_array_equal(n.aux["var:T"], s.aux["var:T"])
+    np.testing.assert_array_equal(n.aux["baseline_weights"], w)
+    f = n.meta["normalization"]["factor"]
+    np.testing.assert_allclose(n.aux["baseline"], b.aux["baseline"] * f)
+    e = ops.convert_x(b, to="eV", spectral_density=True)
+    np.testing.assert_array_equal(np.sort(e.aux["var:T"]), np.sort(s.aux["var:T"]))
+
+
+def test_display_smoothing_follows_baseline_subtraction():
+    s = make()
+    sm = ops.smooth_moving_average(s, half_window=3)
+    b = ops.baseline_polynomial(sm, order=1, ranges=[[400, 550], [650, 800]])
+    np.testing.assert_allclose(b.aux["smoothed"], sm.aux["smoothed"] - b.aux["baseline"])

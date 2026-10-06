@@ -45,6 +45,8 @@ def _finish(s: Spectrum, b: np.ndarray, subtract: bool, recipe: dict) -> Spectru
     aux["baseline"] = b
     total = aux.get("baseline_total", np.zeros(s.n))
     aux["baseline_total"] = total + b if subtract else total
+    if subtract and "smoothed" in aux:          # display smoothing lives on the y scale
+        aux["smoothed"] = aux["smoothed"] - b
     meta = dict(s.meta)
     meta.setdefault("baselines", [])
     meta["baselines"] = list(meta["baselines"]) + [recipe]

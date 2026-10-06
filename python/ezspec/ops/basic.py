@@ -15,6 +15,11 @@ from .registry import operation, warn
 
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz
 
+# Auxiliary curves that live on the y scale and must follow y transformations.
+# Everything else (independent variables "var:*", baseline weights) is left untouched.
+Y_LEVEL_AUX = ("smoothed",)                          # absolute y values
+Y_DIFFERENCE_AUX = ("baseline", "baseline_total")    # y differences (subtracted curves)
+
 
 # =========================================================================== range
 @operation("crop", 1, "Bereich beschneiden", "Bereich",
@@ -60,8 +65,13 @@ def offset_scale(s: Spectrum, offset, factor) -> Spectrum:
     if factor == 0:
         raise ValueError("factor must not be 0")
     sig = None if s.sigma is None else s.sigma * abs(factor)
-    aux = {k: (v - offset) * factor for k, v in s.aux.items() if k == "smoothed"}
-    aux.update({k: v * factor for k, v in s.aux.items() if k != "smoothed"})
+    aux = dict(s.aux)
+    for k in Y_LEVEL_AUX:
+        if k in aux:
+            aux[k] = (aux[k] - offset) * factor
+    for k in Y_DIFFERENCE_AUX:
+        if k in aux:
+            aux[k] = aux[k] * factor
     return s.replace(y=(s.y - offset) * factor, sigma=sig, aux=aux)
 
 
@@ -127,7 +137,7 @@ def convert_x(s: Spectrum, to, from_unit, laser_nm, spectral_density) -> Spectru
     else:
         J = np.ones(s.n)
     sig = None if s.sigma is None else s.sigma * J
-    aux = {k: v * J for k, v in s.aux.items()}
+    aux = {k: (v * J if k in Y_LEVEL_AUX + Y_DIFFERENCE_AUX else v) for k, v in s.aux.items()}
     out = s.replace(x=xn, y=s.y * J, sigma=sig, aux=aux, x_unit=to, x_label=units.AXIS_LABELS[to])
     if spectral_density:
         out = out.with_flags("jacobian")
