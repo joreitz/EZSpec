@@ -245,7 +245,7 @@ def format_report(r: FitResult) -> str:
             flag.append(f"AM BOUND ({p.at_bound}) – SE nicht belastbar")
         elif p.near_bound:
             flag.append("Bound < 2 SE entfernt – SE nicht belastbar")
-        rel = f" ({100 * p.rel_stderr:.2g} %)" if p.stderr and np.isfinite(p.rel_stderr) else ""
+        rel = f" ({100 * p.rel_stderr:.2g} %)" if p.stderr and np.isfinite(p.rel_stderr) and p.rel_stderr < 10 else ""
         L.append(f"  {p.name:<18} {fmt_value(p.value, p.stderr):<30}{rel:<10} {'; '.join(flag)}")
     if r.derived:
         L.append("")

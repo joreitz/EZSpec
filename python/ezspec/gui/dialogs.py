@@ -1,0 +1,533 @@
+"""Dialogs: import, figure editor, model comparison, bootstrap settings."""
+
+from __future__ import annotations
+
+import copy
+from pathlib import Path
+
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtGui import QUndoCommand, QUndoStack
+
+from .. import units as U
+from ..export.figure import (PRESET_NOTE, PRESETS, curves_for, default_spec, get_path, make_resolver,
+                             param_box_lines, render_figure, save_figure, set_path)
+from ..fit import compare
+from ..fit.compare import ComparisonError
+from ..io import read_spectra, sniff
+from ..io.text import parse_table
+from ..project import Dataset
+from .param_form import SciEdit
+
+# ============================================================================ import
+
+
+class ImportDialog(QtWidgets.QDialog):
+    def __init__(self, path, parent=None):
+        super().__init__(parent)
+        self.path = Path(path)
+        self.setWindowTitle(f"Importieren – {self.path.name}")
+        self.info = sniff(self.path)
+        lay = QtWidgets.QVBoxLayout(self)
+        self.datasets = []
+        if self.info["format"] == "jcamp":
+            specs = read_spectra(self.path)
+            s = specs[0]
+            j = s.meta.get("jcamp", {})
+            text = (f"<b>JCAMP-DX</b> · {j.get('TITLE', '')}<br>Datentyp: {j.get('DATATYPE', '?')} · "
+                    f"{s.n} Punkte · x: {j.get('XUNITS', '?')} · y: {j.get('YUNITS', '?')}")
+            for w in s.meta.get("import_warnings", []):
+                text += f"<br><span style='color:#b36b00'>⚠ {w}</span>"
+            lay.addWidget(QtWidgets.QLabel(text))
+            self._jcamp = specs
+        else:
+            self._jcamp = None
+            top = QtWidgets.QFormLayout()
+            self.delim = QtWidgets.QComboBox()
+            for label, val in (("automatisch", "auto"), ("Tab", "\t"), ("Semikolon ;", ";"), ("Komma ,", ","),
+                               ("Leerraum", None)):
+                self.delim.addItem(label, val)
+            self.decimal = QtWidgets.QComboBox()
+            for label, val in (("automatisch", "auto"), ("Punkt .", "."), ("Komma ,", ",")):
+                self.decimal.addItem(label, val)
+            top.addRow("Trennzeichen", self.delim)
+            top.addRow("Dezimalzeichen", self.decimal)
+            lay.addLayout(top)
+            self.table = QtWidgets.QTableWidget()
+            self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            lay.addWidget(self.table, 1)
+            cols = QtWidgets.QFormLayout()
+            self.xcol = QtWidgets.QComboBox()
+            self.ycols = QtWidgets.QListWidget()
+            self.ycols.setMaximumHeight(110)
+            self.scol = QtWidgets.QComboBox()
+            self.vars = QtWidgets.QListWidget()
+            self.vars.setMaximumHeight(80)
+            self.vars.setToolTip("weitere unabhängige Variablen für Formeln mit mehreren Prädiktoren")
+            self.unit = QtWidgets.QComboBox()
+            self.unit.addItem("(keine/unbekannt)", "")
+            for k, v in U.UNITS.items():
+                self.unit.addItem(v, k)
+            cols.addRow("x-Spalte", self.xcol)
+            cols.addRow("y-Spalte(n)", self.ycols)
+            cols.addRow("σ-Spalte (optional)", self.scol)
+            cols.addRow("zusätzl. Variablen", self.vars)
+            cols.addRow("x-Einheit", self.unit)
+            lay.addLayout(cols)
+            self.status = QtWidgets.QLabel()
+            self.status.setObjectName("hint")
+            lay.addWidget(self.status)
+            self.delim.currentIndexChanged.connect(self._reparse)
+            self.decimal.currentIndexChanged.connect(self._reparse)
+            self._reparse()
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.resize(640, 600)
+
+    def _reparse(self):
+        from ..io.text import decode_bytes, guess_unit
+        text, _ = decode_bytes(self.path.read_bytes())
+        try:
+            t = parse_table(text, delimiter=self.delim.currentData(), decimal=self.decimal.currentData())
+        except ValueError as e:
+            self.status.setText(f"✖ {e}")
+            self.table.setRowCount(0)
+            return
+        self.tinfo = t
+        n, m = t.data.shape
+        self.table.setColumnCount(m)
+        self.table.setRowCount(min(n, 30))
+        self.table.setHorizontalHeaderLabels(t.header)
+        for i in range(min(n, 30)):
+            for j in range(m):
+                self.table.setItem(i, j, QtWidgets.QTableWidgetItem(f"{t.data[i, j]:.8g}"))
+        self.xcol.clear()
+        self.scol.clear()
+        self.ycols.clear()
+        self.vars.clear()
+        self.scol.addItem("—", None)
+        for j, h in enumerate(t.header):
+            self.xcol.addItem(h, j)
+            self.scol.addItem(h, j)
+            it = QtWidgets.QListWidgetItem(h)
+            it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+            it.setCheckState(QtCore.Qt.Checked if j == 1 or (m > 2 and j > 0) else QtCore.Qt.Unchecked)
+            self.ycols.addItem(it)
+            v = QtWidgets.QListWidgetItem(h)
+            v.setFlags(v.flags() | QtCore.Qt.ItemIsUserCheckable)
+            v.setCheckState(QtCore.Qt.Unchecked)
+            self.vars.addItem(v)
+        if m == 1:
+            self.ycols.item(0).setCheckState(QtCore.Qt.Checked)
+        guess = guess_unit(t.header[0]) if t.header else ""
+        self.unit.setCurrentIndex(max(self.unit.findData(guess), 0))
+        self.status.setText(f"{n} Datenzeilen, {m} Spalten, {t.n_header_lines} Kopfzeilen, "
+                            f"{t.skipped} übersprungen · Trennzeichen "
+                            f"{'Leerraum' if t.delimiter is None else repr(t.delimiter)} · Dezimal {t.decimal!r}")
+
+    def _accept(self):
+        try:
+            if self._jcamp is not None:
+                specs = self._jcamp
+            else:
+                x = self.xcol.currentData()
+                s = self.scol.currentData()
+                extra = {self.vars.item(j).text().replace(" ", "_"): j for j in range(self.vars.count())
+                         if self.vars.item(j).checkState() == QtCore.Qt.Checked and j != x}
+                ys = [j for j in range(self.ycols.count()) if self.ycols.item(j).checkState() == QtCore.Qt.Checked
+                      and j not in (x, s) and j not in extra.values()]
+                if not ys and self.tinfo.data.shape[1] > 1:
+                    raise ValueError("keine y-Spalte gewählt")
+                specs = read_spectra(self.path, x_col=x, y_cols=ys or None, sigma_col=s,
+                                     delimiter=self.tinfo.delimiter, decimal=self.tinfo.decimal,
+                                     x_unit=self.unit.currentData(), extra_cols=extra or None)
+            raw = self.path.read_bytes()
+            self.datasets = [Dataset(name=sp.meta.get("name", self.path.stem), raw=sp, raw_bytes=raw,
+                                     raw_ext=self.path.suffix.lower()) for sp in specs]
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(self, "Import", str(e))
+            return
+        self.accept()
+
+
+# ============================================================================ figure editor
+class SetPathCommand(QUndoCommand):
+    def __init__(self, dlg, path, old, new):
+        super().__init__(f"Figur: {path}")
+        self.dlg, self.path, self.old, self.new = dlg, path, old, new
+
+    def redo(self):
+        set_path(self.dlg.spec, self.path, copy.deepcopy(self.new))
+        self.dlg.spec_changed()
+
+    def undo(self):
+        set_path(self.dlg.spec, self.path, copy.deepcopy(self.old))
+        self.dlg.spec_changed()
+
+
+class FigureDialog(QtWidgets.QDialog):
+    """Publication figure editor: every change is an undoable Set(path, value) on the JSON spec."""
+
+    LEGEND = [None, "best", "upper right", "upper left", "lower left", "lower right", "center right",
+              "upper center", "lower center"]
+
+    def __init__(self, ds, spec=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Abbildung – {ds.name}")
+        self.ds = ds
+        run = ds.run_pipeline()
+        self.processed = run.final
+        res = ds.fit_result
+        self.curves = {ds.id: curves_for(self.processed, ds.raw, res, ds.model if res is not None else None)}
+        xl = U.AXIS_LABELS.get(self.processed.x_unit, self.processed.x_label)
+        self.spec = copy.deepcopy(spec) if spec else default_spec(ds.id, self.curves[ds.id], xl,
+                                                                  self.processed.y_label or "Intensity")
+        self.undo = QUndoStack(self)
+        self._timer = QtCore.QTimer(self, singleShot=True, interval=120)
+        self._timer.timeout.connect(self._render)
+        self._loading = False
+
+        lay = QtWidgets.QHBoxLayout(self)
+        left = QtWidgets.QWidget()
+        left.setMaximumWidth(380)
+        lv = QtWidgets.QVBoxLayout(left)
+        form = QtWidgets.QFormLayout()
+        self.preset = QtWidgets.QComboBox()
+        self.preset.addItem("(benutzerdefiniert)", "custom")
+        for k, p in PRESETS.items():
+            self.preset.addItem(p["title"], k)
+        self.preset.setToolTip(PRESET_NOTE)
+        self.width = SciEdit()
+        self.height = SciEdit()
+        self.font = QtWidgets.QDoubleSpinBox()
+        self.font.setRange(4, 30)
+        self.font.setSingleStep(0.5)
+        self.family = QtWidgets.QComboBox()
+        self.family.addItems(["sans-serif", "serif"])
+        self.lw = QtWidgets.QDoubleSpinBox()
+        self.lw.setRange(0.2, 5)
+        self.lw.setSingleStep(0.1)
+        self.panel_labels = QtWidgets.QCheckBox("(a), (b) …")
+        form.addRow("Vorlage", self.preset)
+        form.addRow("Breite / mm", self.width)
+        form.addRow("Höhe / mm", self.height)
+        form.addRow("Schrift / pt", self.font)
+        form.addRow("Schriftart", self.family)
+        form.addRow("Linienbreite / pt", self.lw)
+        form.addRow("Panel-Label", self.panel_labels)
+        lv.addLayout(form)
+        note = QtWidgets.QLabel(PRESET_NOTE)
+        note.setObjectName("hint")
+        note.setWordWrap(True)
+        lv.addWidget(note)
+
+        self.panel_sel = QtWidgets.QComboBox()
+        lv.addWidget(self.panel_sel)
+        pf = QtWidgets.QFormLayout()
+        self.xlabel = QtWidgets.QLineEdit()
+        self.ylabel = QtWidgets.QLineEdit()
+        self.legend = QtWidgets.QComboBox()
+        for v in self.LEGEND:
+            self.legend.addItem("keine" if v is None else v, v)
+        self.invert = QtWidgets.QCheckBox("x invertieren")
+        self.ylog = QtWidgets.QCheckBox("y logarithmisch")
+        self.grid = QtWidgets.QCheckBox("Gitter")
+        self.sec = QtWidgets.QComboBox()
+        self.sec.addItem("—", None)
+        for k, v in U.UNITS.items():
+            self.sec.addItem(v, k)
+        self.laser = SciEdit(optional=True)
+        self.laser.setPlaceholderText("Laser / nm")
+        pf.addRow("x-Titel", self.xlabel)
+        pf.addRow("y-Titel", self.ylabel)
+        pf.addRow("Legende", self.legend)
+        checks = QtWidgets.QHBoxLayout()
+        for c in (self.invert, self.ylog, self.grid):
+            checks.addWidget(c)
+        pf.addRow(checks)
+        secrow = QtWidgets.QHBoxLayout()
+        secrow.addWidget(self.sec, 1)
+        secrow.addWidget(self.laser)
+        pf.addRow("2. x-Achse", secrow)
+        lv.addLayout(pf)
+        self.traces = QtWidgets.QTableWidget(0, 4)
+        self.traces.setHorizontalHeaderLabels(["an", "Kurve", "Legende", "Farbe"])
+        self.traces.verticalHeader().setVisible(False)
+        self.traces.horizontalHeader().setStretchLastSection(True)
+        self.traces.setColumnWidth(0, 28)
+        self.traces.cellChanged.connect(self._trace_edited)
+        self.traces.cellDoubleClicked.connect(self._pick_color)
+        lv.addWidget(self.traces, 1)
+        self.params = QtWidgets.QListWidget()
+        self.params.setMaximumHeight(100)
+        self.params.setToolTip("Parameter für das Textfeld im Hauptpanel")
+        if res is not None:
+            names = list(res.params) + [f"{d.component}.{d.name}" for d in res.derived]
+            for n in names:
+                it = QtWidgets.QListWidgetItem(n)
+                it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+                it.setCheckState(QtCore.Qt.Unchecked)
+                self.params.addItem(it)
+        lv.addWidget(QtWidgets.QLabel("Parameterbox:"))
+        lv.addWidget(self.params)
+        btns = QtWidgets.QHBoxLayout()
+        ub = QtWidgets.QPushButton("↶")
+        ub.setToolTip("Rückgängig")
+        ub.clicked.connect(self.undo.undo)
+        rb = QtWidgets.QPushButton("↷")
+        rb.setToolTip("Wiederholen")
+        rb.clicked.connect(self.undo.redo)
+        ex = QtWidgets.QPushButton("Export…")
+        ex.setObjectName("primary")
+        ex.setMinimumWidth(90)
+        ex.clicked.connect(self._export)
+        ok = QtWidgets.QPushButton("Übernehmen")
+        ok.clicked.connect(self.accept)
+        for b in (ub, rb, ex, ok):
+            btns.addWidget(b)
+        lv.addLayout(btns)
+        lay.addWidget(left)
+
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        self._canvas_cls = FigureCanvasQTAgg
+        self.preview = QtWidgets.QScrollArea()
+        self.preview.setWidgetResizable(False)
+        self.preview.setAlignment(QtCore.Qt.AlignCenter)
+        self.preview.setStyleSheet("QScrollArea { background: #8a8f98; }")
+        right = QtWidgets.QVBoxLayout()
+        self.zoom = QtWidgets.QComboBox()
+        for z in ("100 % (physische Größe)", "150 %", "200 %"):
+            self.zoom.addItem(z)
+        self.zoom.currentIndexChanged.connect(lambda: self._timer.start())
+        right.addWidget(self.zoom)
+        right.addWidget(self.preview, 1)
+        lay.addLayout(right, 1)
+
+        self._connect()
+        self._load_controls()
+        self._render()
+        self.resize(1200, 760)
+
+    # ------------------------------------------------------------------ wiring
+    def _set(self, path, value):
+        if self._loading:
+            return
+        old = copy.deepcopy(get_path(self.spec, path))
+        if old == value:
+            return
+        self.undo.push(SetPathCommand(self, path, old, value))
+
+    def _panel(self):
+        return max(self.panel_sel.currentIndex(), 0)
+
+    def _connect(self):
+        self.preset.currentIndexChanged.connect(self._apply_preset)
+        self.width.valueEdited.connect(lambda v: self._set("width_mm", v))
+        self.height.valueEdited.connect(lambda v: self._set("height_mm", v))
+        self.font.valueChanged.connect(lambda v: self._set("font_size", v))
+        self.family.currentTextChanged.connect(lambda v: self._set("font_family", v))
+        self.lw.valueChanged.connect(lambda v: self._set("line_width", v))
+        self.panel_labels.toggled.connect(lambda v: self._set("panel_labels", v))
+        self.panel_sel.currentIndexChanged.connect(lambda _i: self._load_panel())
+        self.xlabel.editingFinished.connect(lambda: self._set(f"panels.{self._panel()}.xlabel", self.xlabel.text()))
+        self.ylabel.editingFinished.connect(lambda: self._set(f"panels.{self._panel()}.ylabel", self.ylabel.text()))
+        self.legend.currentIndexChanged.connect(
+            lambda: self._set(f"panels.{self._panel()}.legend", self.legend.currentData()))
+        self.invert.toggled.connect(lambda v: self._set(f"panels.{self._panel()}.invert_x", v))
+        self.ylog.toggled.connect(lambda v: self._set(f"panels.{self._panel()}.yscale", "log" if v else "linear"))
+        self.grid.toggled.connect(lambda v: self._set(f"panels.{self._panel()}.grid", v))
+        self.sec.currentIndexChanged.connect(self._secondary_changed)
+        self.laser.valueEdited.connect(lambda _v: self._secondary_changed())
+        self.params.itemChanged.connect(self._params_changed)
+
+    def _apply_preset(self):
+        key = self.preset.currentData()
+        if self._loading or key == "custom":
+            return
+        p = PRESETS[key]
+        self.undo.beginMacro(f"Vorlage {p['title']}")
+        self._set("preset", key)
+        self._set("width_mm", p["width_mm"])
+        self._set("height_mm", p["height_mm"])
+        self._set("font_size", p["font_size"])
+        self.undo.endMacro()
+
+    def _secondary_changed(self):
+        unit = self.sec.currentData()
+        src = self.processed.x_unit
+        val = None
+        if unit and src in U.UNITS and unit != src:
+            val = {"from": src, "to": unit, "laser_nm": self.laser.value()}
+        self._set(f"panels.{self._panel()}.secondary_x", val)
+
+    def _params_changed(self):
+        res = self.ds.fit_result
+        names = [self.params.item(i).text() for i in range(self.params.count())
+                 if self.params.item(i).checkState() == QtCore.Qt.Checked]
+        val = {"lines": param_box_lines(res, names)} if names else None
+        self._set("panels.0.param_box", val)
+
+    def _trace_edited(self, row, col):
+        if self._loading:
+            return
+        base = f"panels.{self._panel()}.traces.{row}"
+        it = self.traces.item(row, col)
+        if col == 0:
+            self._set(base + ".visible", it.checkState() == QtCore.Qt.Checked)
+        elif col == 2:
+            self._set(base + ".label", it.text())
+
+    def _pick_color(self, row, col):
+        if col != 3:
+            return
+        base = f"panels.{self._panel()}.traces.{row}"
+        cur = get_path(self.spec, base + ".color") or "#000000"
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(cur), self, "Farbe")
+        if c.isValid():
+            self._set(base + ".color", c.name())
+
+    # ------------------------------------------------------------------ state <-> controls
+    def spec_changed(self):
+        self._load_controls()
+        self._timer.start()
+
+    def _load_controls(self):
+        self._loading = True
+        try:
+            s = self.spec
+            self.preset.setCurrentIndex(max(self.preset.findData(s.get("preset", "custom")), 0))
+            self.width.setValue(s["width_mm"])
+            self.height.setValue(s["height_mm"])
+            self.font.setValue(s["font_size"])
+            self.family.setCurrentText(s.get("font_family", "sans-serif"))
+            self.lw.setValue(s.get("line_width", 1.0))
+            self.panel_labels.setChecked(bool(s.get("panel_labels")))
+            idx = self._panel()
+            self.panel_sel.clear()
+            for i, p in enumerate(s["panels"]):
+                self.panel_sel.addItem(f"Panel {i + 1}" + (" (Haupt)" if i == 0 else " (Residuen)" if i == 1 else ""))
+            self.panel_sel.setCurrentIndex(min(idx, len(s["panels"]) - 1))
+        finally:
+            self._loading = False
+        self._load_panel()
+
+    def _load_panel(self):
+        if not self.spec["panels"]:
+            return
+        self._loading = True
+        try:
+            p = self.spec["panels"][self._panel()]
+            self.xlabel.setText(p.get("xlabel", ""))
+            self.ylabel.setText(p.get("ylabel", ""))
+            self.legend.setCurrentIndex(max(self.legend.findData(p.get("legend")), 0))
+            self.invert.setChecked(bool(p.get("invert_x")))
+            self.ylog.setChecked(p.get("yscale") == "log")
+            self.grid.setChecked(bool(p.get("grid")))
+            sec = p.get("secondary_x")
+            self.sec.setCurrentIndex(max(self.sec.findData(sec["to"] if sec else None), 0))
+            self.traces.setRowCount(len(p["traces"]))
+            for i, t in enumerate(p["traces"]):
+                on = QtWidgets.QTableWidgetItem()
+                on.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
+                on.setCheckState(QtCore.Qt.Checked if t.get("visible", True) else QtCore.Qt.Unchecked)
+                self.traces.setItem(i, 0, on)
+                name = QtWidgets.QTableWidgetItem(t["curve"])
+                name.setFlags(name.flags() & ~QtCore.Qt.ItemIsEditable)
+                self.traces.setItem(i, 1, name)
+                self.traces.setItem(i, 2, QtWidgets.QTableWidgetItem(t.get("label", "")))
+                col = QtWidgets.QTableWidgetItem(t.get("color") or "auto")
+                col.setFlags(col.flags() & ~QtCore.Qt.ItemIsEditable)
+                if t.get("color"):
+                    qc = QtGui.QColor(t["color"])
+                    col.setBackground(qc)
+                    col.setForeground(QtGui.QColor("white" if qc.lightness() < 128 else "black"))
+                col.setToolTip("Doppelklick: Farbe wählen")
+                self.traces.setItem(i, 3, col)
+        finally:
+            self._loading = False
+
+    # ------------------------------------------------------------------ render / export
+    def _render(self):
+        try:
+            fig = render_figure(self.spec, make_resolver(self.curves))
+        except Exception as e:  # noqa: BLE001
+            lab = QtWidgets.QLabel(f"Fehler beim Rendern: {e}")
+            lab.setWordWrap(True)
+            self.preview.setWidget(lab)
+            return
+        zoom = [1.0, 1.5, 2.0][self.zoom.currentIndex()]
+        dpi = self.logicalDpiX() * zoom
+        fig.set_dpi(dpi)
+        canvas = self._canvas_cls(fig)
+        w, h = fig.get_size_inches()
+        canvas.setFixedSize(int(w * dpi), int(h * dpi))
+        self.preview.setWidget(canvas)
+
+    def _export(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Abbildung exportieren", f"{self.ds.name}.pdf",
+            "PDF (*.pdf);;SVG (*.svg);;PNG (*.png);;PGF/LaTeX (*.pgf);;EPS (*.eps)")
+        if not path:
+            return
+        try:
+            save_figure(self.spec, make_resolver(self.curves), path)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(self, "Export", str(e))
+            return
+        QtWidgets.QMessageBox.information(self, "Export", f"Gespeichert: {path}")
+
+
+# ============================================================================ comparison
+class CompareDialog(QtWidgets.QDialog):
+    def __init__(self, results: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Modellvergleich")
+        lay = QtWidgets.QVBoxLayout(self)
+        try:
+            c = compare(results)
+        except ComparisonError as e:
+            lay.addWidget(QtWidgets.QLabel(f"<span style='color:#b3261e'>✖ {e}</span>"))
+            c = None
+        if c is not None:
+            t = QtWidgets.QTableWidget(len(c["rows"]), 6)
+            t.setHorizontalHeaderLabels(["Modell", "K", f"Δ{c['rows'][0]['criterion']}", "Akaike-Gewicht",
+                                         "ΔBIC", "χ²_ν / s"])
+            for i, r in enumerate(c["rows"]):
+                vals = [r["model"], str(r["k"]), f"{r['delta_aic']:.2f}", f"{r['akaike_weight']:.3f}",
+                        f"{r['delta_bic']:.2f}",
+                        f"{r['redchi']:.4g}" if r["redchi"] is not None else f"s = {r['s_res']:.4g}"]
+                for j, v in enumerate(vals):
+                    t.setItem(i, j, QtWidgets.QTableWidgetItem(v))
+            t.resizeColumnsToContents()
+            lay.addWidget(t)
+            note = QtWidgets.QLabel(c["note"] + "\nForm: " + c["form"])
+            note.setWordWrap(True)
+            note.setObjectName("hint")
+            lay.addWidget(note)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.resize(620, 300)
+
+
+class BootstrapDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Bootstrap")
+        form = QtWidgets.QFormLayout(self)
+        self.n = QtWidgets.QSpinBox()
+        self.n.setRange(50, 20000)
+        self.n.setValue(500)
+        self.kind = QtWidgets.QComboBox()
+        self.kind.addItem("Residuen (homoskedastisch)", "residual")
+        self.kind.addItem("Wild/Rademacher (heteroskedastisch)", "wild")
+        self.seed = QtWidgets.QSpinBox()
+        self.seed.setRange(0, 2**31 - 1)
+        form.addRow("Wiederholungen", self.n)
+        form.addRow("Verfahren", self.kind)
+        form.addRow("Seed", self.seed)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        form.addRow(bb)

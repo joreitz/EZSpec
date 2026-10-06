@@ -116,6 +116,23 @@ class Dataset:
         return result
 
     @classmethod
+    def from_bytes(cls, data: bytes, filename: str, index: int = 0, **reader_kw) -> "Dataset":
+        """Create a dataset from file contents (e.g. generated example data)."""
+        import tempfile
+        from .io import read_spectra
+        suffix = Path(filename).suffix
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / filename
+            p.write_bytes(data)
+            s = read_spectra(p, **reader_kw)[index]
+        meta = dict(s.meta)
+        src = dict(meta.get("source", {}))
+        src["path"] = filename
+        meta["source"] = src
+        s = s.replace(meta=meta)
+        return cls(name=s.meta.get("name", Path(filename).stem), raw=s, raw_bytes=data, raw_ext=suffix.lower())
+
+    @classmethod
     def from_file(cls, path, index: int = 0, **reader_kw) -> "Dataset":
         from .io import read_spectra
         path = Path(path)

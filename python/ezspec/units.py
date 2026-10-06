@@ -30,6 +30,13 @@ UNITS = {
     "raman": "Raman-Verschiebung Δν̃ / cm⁻¹",
 }
 
+PLAIN_LABELS = {
+    "nm": "Wellenlänge λ (nm)",
+    "cm-1": "Wellenzahl ν̃ (cm⁻¹)",
+    "eV": "Energie E (eV)",
+    "raman": "Raman-Verschiebung (cm⁻¹)",
+}
+
 AXIS_LABELS = {
     "nm": r"Wavelength $\lambda$ (nm)",
     "cm-1": r"Wavenumber $\tilde{\nu}$ (cm$^{-1}$)",
