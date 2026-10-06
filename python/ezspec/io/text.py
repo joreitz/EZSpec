@@ -37,7 +37,7 @@ def decode_bytes(raw: bytes) -> tuple:
     for enc in ("utf-8-sig", "utf-16", "cp1252", "latin-1"):
         try:
             text = raw.decode(enc)
-            if enc == "utf-16" and not raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            if enc == "utf-16" and raw[:2] not in (b"\xff\xfe", b"\xfe\xff"):
                 continue
             return text, enc
         except UnicodeDecodeError:

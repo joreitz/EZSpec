@@ -46,6 +46,22 @@ unterschätzen (O'Haver). Glätten in EZSpec dient standardmäßig nur der Anzei
 </ul>"""
 
 
+QUICKSTART = """<h3>Kurzanleitung</h3>
+<ol>
+<li><b>Daten</b>: Importieren (Text/CSV, JCAMP-DX) oder Datei ins Fenster ziehen. Beispiel: Datei → Beispieldaten.</li>
+<li><b>Verarbeitung</b>: „+ Schritt“. Gewählter Schritt zeigt Eingang und Ergebnis; Parameter wirken live.
+Werkzeuge im Plot (Tasten 1–4): Navigieren · Anker (Klick setzen, ziehen, Rechtsklick löschen, Shift = frei) ·
+Bereich (Masken, Pflichtbereiche, Rausch-/Fitbereich) · Peak.</li>
+<li><b>σ</b>: σ-Spalte importieren oder „Rauschen schätzen → σ“ – sonst gilt σ als unbekannt (kein χ²).</li>
+<li><b>Modell</b>: Werkzeug Peak (Klick = neuer Peak; Marker ziehen = Lage/Höhe/Breite), „Peaks finden“,
+„+ Komponente“ (Untergrund, klassische Funktion, eigene Formel). Tabelle: Start, Grenzen, frei, Ausdruck.</li>
+<li><b>Fit</b>: Strg+R. Ergebnis-Panel: Statistik, Warnungen, abgeleitete Größen, Korrelationen, Residuen.</li>
+<li><b>Vertiefen</b>: Profil-CI, Bootstrap, MCMC, Baseline-Systematik, Varianten vergleichen, Serie/global (Strg+G).</li>
+<li><b>Export</b>: Abbildung (Strg+E), Tabellen, Python-Skript (reproduziert alles aus den Rohdaten).</li>
+</ol>
+<p>Alles ist rückgängig machbar (Strg+Z); der Verlauf steht im Dock „Verlauf“.</p>"""
+
+
 def estimate_fwhm(x, y, x0, base, height):
     """Width at half height around x0 in the data (start value for a new peak)."""
     if len(x) < 3:
@@ -139,6 +155,9 @@ class MainWindow(QtWidgets.QMainWindow):
         ex.addAction("Raman-Spektrum mit Fluoreszenzuntergrund", lambda: self.load_example("raman"))
         ex.addAction("Abklingkurve (Poisson-Zählraten)", lambda: self.load_example("decay"))
         f.addSeparator()
+        f.addAction("Vorlage speichern…", self.save_template)
+        f.addAction("Vorlage anwenden…", self.apply_template)
+        f.addSeparator()
         exp = f.addMenu("Exportieren")
         exp.addAction("Abbildung…", self.figure_dialog, QtGui.QKeySequence("Ctrl+E"))
         exp.addAction("Fit-Ergebnisse (CSV/JSON/Bericht)…", self.export_results)
@@ -187,6 +206,8 @@ class MainWindow(QtWidgets.QMainWindow):
             act.setShortcut(QtGui.QKeySequence(str(i)))
 
         h = mb.addMenu("&Hilfe")
+        h.addAction("Kurzanleitung", lambda: QtWidgets.QMessageBox.information(self, "Kurzanleitung", QUICKSTART),
+                    QtGui.QKeySequence.HelpContents)
         h.addAction("Statistik-Hinweise", lambda: QtWidgets.QMessageBox.information(self, "Statistik", STATS_HELP))
         h.addAction("Über EZSpec", self.about)
 
@@ -413,6 +434,43 @@ class MainWindow(QtWidgets.QMainWindow):
         if which == "raman":
             ds.pipeline.add("set_units", {"x_unit": "raman", "y_label": "Intensity (counts)"})
         self.state.add_dataset(ds)
+
+    def save_template(self):
+        from ..project import save_template
+        ds = self.state.current()
+        if ds is None:
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Vorlage speichern", f"{ds.name}.ezspec-template.json",
+                                                        "EZSpec-Vorlage (*.json)")
+        if path:
+            save_template(ds, path)
+            self.statusBar().showMessage(f"Vorlage gespeichert: {path}", 4000)
+
+    def apply_template(self, path=None):
+        from ..project import load_template
+        ds = self.state.current()
+        if ds is None:
+            return
+        if not path:
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Vorlage anwenden", "", "EZSpec-Vorlage (*.json)")
+        if not path:
+            return
+        try:
+            t = load_template(path)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(self, "Vorlage", str(e))
+            return
+        from ..fit import FitOptions
+        from ..models import Model
+        from ..pipeline import Pipeline
+        self.state.undo.beginMacro("Vorlage anwenden")
+        self.state.edit("pipeline", lambda p: p.steps.__setitem__(slice(None), Pipeline.from_dict(t["pipeline"]).steps),
+                        "Pipeline aus Vorlage")
+        self.state.edit("model", lambda m: m.components.__setitem__(slice(None), Model.from_dict(t["model"]).components),
+                        "Modell aus Vorlage")
+        self.state.edit("options", lambda o: o.__dict__.update(FitOptions.from_dict(t["fit_options"]).to_dict()),
+                        "Fit-Optionen aus Vorlage")
+        self.state.undo.endMacro()
 
     def new_project(self):
         if not self._confirm_discard():

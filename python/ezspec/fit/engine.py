@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 import lmfit
 import numpy as np

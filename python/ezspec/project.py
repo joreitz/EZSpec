@@ -237,3 +237,25 @@ class Project:
             for name in manifest.get("figures", []):
                 proj.figures[name] = json.loads(z.read(f"figures/{name}.json"))
         return proj
+
+
+TEMPLATE_FORMAT = "ezspec.template"
+
+
+def template_of(ds: Dataset) -> dict:
+    """Pipeline, model and fit options of a dataset as a reusable template (x in physical units)."""
+    return {"format": TEMPLATE_FORMAT, "version": 1, "pipeline": ds.pipeline.to_dict(),
+            "model": ds.model.to_dict(), "fit_options": ds.fit_options.to_dict()}
+
+
+def save_template(ds: Dataset, path) -> None:
+    Path(path).write_text(json.dumps(_jsonable(template_of(ds)), indent=1, ensure_ascii=False), encoding="utf-8")
+
+
+def load_template(path) -> dict:
+    d = json.loads(Path(path).read_text(encoding="utf-8"))
+    if d.get("format") != TEMPLATE_FORMAT:
+        raise ValueError("keine EZSpec-Vorlage")
+    Pipeline.from_dict(d["pipeline"])        # validate
+    Model.from_dict(d["model"])
+    return d

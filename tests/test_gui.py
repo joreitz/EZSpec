@@ -221,3 +221,72 @@ def test_series_dialog(app, win):
             break
     assert dlg.global_result is not None and "p1_fwhm" in dlg.global_result.params
     dlg.close()
+
+
+def test_templates_roundtrip(app, win, tmp_path):
+    from ezspec.project import save_template
+    w = win
+    ds = w.state.current()
+    w.pipeline_panel.add_step("baseline_snip")
+    w.state.select_step(None)
+    w.plot.peakAdded.emit(1001.0, 90.0)
+    pump(app)
+    path = tmp_path / "t.ezspec-template.json"
+    save_template(ds, path)
+    w.load_example("decay")
+    pump(app)
+    other = w.state.current()
+    assert other is not ds and not other.model.components
+    w.apply_template(str(path))
+    pump(app)
+    assert [s.op for s in other.pipeline] == [s.op for s in ds.pipeline]
+    assert len(other.model.components) == 1
+    w.state.undo.undo()                       # one macro
+    assert not other.model.components
+
+
+ENTRY_SCRIPT = """
+import sys
+from PySide6 import QtCore, QtWidgets
+from ezspec.gui import app as app_module
+
+app = QtWidgets.QApplication(["ezspec"])
+seen = {}
+
+
+def accept_dialog():
+    for w in QtWidgets.QApplication.topLevelWidgets():
+        if w.__class__.__name__ == "ImportDialog" and w.isVisible():
+            w.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok).click()
+
+
+def finish():
+    for w in QtWidgets.QApplication.topLevelWidgets():
+        if w.__class__.__name__ == "MainWindow" and w.isVisible():
+            seen["n"] = len(w.state.project.datasets)
+            w.state.undo.setClean()
+            w.close()
+    QtWidgets.QApplication.quit()
+
+
+QtCore.QTimer.singleShot(500, accept_dialog)
+QtCore.QTimer.singleShot(1500, finish)
+QtCore.QTimer.singleShot(10000, QtWidgets.QApplication.quit)
+code = app_module.main(["ezspec", sys.argv[1]])
+print("RESULT", code, seen.get("n"))
+"""
+
+
+def test_entry_point_starts_imports_and_quits(tmp_path):
+    import subprocess
+    import sys
+
+    from ezspec.examples import raman_example, to_csv_bytes
+    f = tmp_path / "r.csv"
+    f.write_bytes(to_csv_bytes(raman_example()))
+    script = tmp_path / "entry.py"
+    script.write_text(ENTRY_SCRIPT)
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", XDG_CONFIG_HOME=str(tmp_path))
+    res = subprocess.run([sys.executable, str(script), str(f)], capture_output=True, text=True, timeout=120,
+                         env=env)
+    assert "RESULT 0 1" in res.stdout, res.stdout + res.stderr
