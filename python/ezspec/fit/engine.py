@@ -502,11 +502,17 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
             val, se = propagate(lambda v, c=comp, k=key: c.derived(v)[k], best, names, covar)
             derived.append(DerivedResult(comp.prefix.rstrip("_") or comp.display_name, key, float(val),
                                          None if se is None else float(se)))
-    if len(peaks) > 1:
-        def frac(v, i):
-            areas = [c.derived(v)["area"] for c in peaks]
+    groups = {}
+    for comp in peaks:      # area fractions within each spectrum (group) – global fits have several
+        groups.setdefault(getattr(comp, "group", 0), []).append(comp)
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+
+        def frac(v, i, members=members):
+            areas = [c.derived(v)["area"] for c in members]
             return areas[i] / sum(areas)
-        for i, comp in enumerate(peaks):
+        for i, comp in enumerate(members):
             val, se = propagate(lambda v, i=i: frac(v, i), best, names, covar)
             derived.append(DerivedResult(comp.prefix.rstrip("_"), "area_fraction", float(val),
                                          None if se is None else float(se)))

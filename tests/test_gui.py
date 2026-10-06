@@ -183,3 +183,40 @@ def test_backend_switch_keeps_results_equal(app, win):
     b = w.state.run(ds).final.y.copy()
     w.switch_backend("rust")
     np.testing.assert_allclose(a, b, rtol=1e-8, atol=1e-8)
+
+
+def test_series_dialog(app, win):
+    from ezspec.gui.dialogs import SeriesDialog
+    w = win
+    w.load_example("raman")
+    pump(app)
+    ds2 = w.state.current()
+    first = w.state.project.datasets[0]
+    w.state.set_current(first.id)
+    w.pipeline_panel.add_step("baseline_arpls")
+    pump(app)
+    sid = w.state.selected_step
+    w.state.edit("pipeline", lambda p: p.update(sid, {"lam": 1e7}), "lam")
+    w.state.select_step(None)
+    for x, y in ((1001, 92), (1602, 37)):
+        w.plot.peakAdded.emit(x, y)
+    pump(app)
+    dlg = SeriesDialog(w.state, w)
+    dlg.run()
+    for _ in range(3000):
+        pump(app, 1)
+        if dlg._task is None:
+            break
+    assert dlg.series is not None and all(r is not None for r in dlg.series.results)
+    assert len(ds2.pipeline) == len(first.pipeline) and ds2.fit_result is not None
+    v, e = dlg.series.parameter("p2_center")
+    assert np.allclose(v, v[0])          # identical example data -> identical fits
+    dlg.mode.setCurrentIndex(2)
+    dlg.shared.item(2).setCheckState(QtCore.Qt.Checked)      # p1_fwhm
+    dlg.run()
+    for _ in range(3000):
+        pump(app, 1)
+        if dlg._task is None:
+            break
+    assert dlg.global_result is not None and "p1_fwhm" in dlg.global_result.params
+    dlg.close()

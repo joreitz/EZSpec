@@ -18,7 +18,7 @@ from ..models import add_peak, find_peaks
 from ..ops.baseline import anchor_values
 from ..project import Dataset, Project
 from . import peak_edit
-from .dialogs import BootstrapDialog, CompareDialog, FigureDialog, ImportDialog
+from .dialogs import BootstrapDialog, CompareDialog, FigureDialog, ImportDialog, SeriesDialog
 from .model_panel import ModelPanel
 from .pipeline_panel import DatasetsPanel, PipelinePanel
 from .plot_view import PlotView
@@ -159,6 +159,8 @@ class MainWindow(QtWidgets.QMainWindow):
         a.addAction("Peaks automatisch finden", self.auto_peaks)
         a.addAction("Profil-Konfidenzintervalle", self.run_profile)
         a.addAction("Bootstrap…", self.run_bootstrap)
+        a.addSeparator()
+        a.addAction("Serie / globaler Fit…", self.series_dialog, QtGui.QKeySequence("Ctrl+G"))
         a.addSeparator()
         a.addAction("Fit als Variante merken", self.remember_variant)
         a.addAction("Modelle vergleichen…", self.compare_variants)
@@ -598,6 +600,12 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Bootstrap", msg.split("\n\n")[0])
         self._task = start_task(bootstrap, done, failed, None, ds.fit_result, dlg.n.value(),
                                 dlg.kind.currentData(), dlg.seed.value())
+
+    def series_dialog(self):
+        if len(self.state.project.datasets) < 2:
+            QtWidgets.QMessageBox.information(self, "Serie", "Mindestens zwei Datensätze importieren.")
+            return
+        SeriesDialog(self.state, self).exec()
 
     def remember_variant(self):
         ds = self._require_fit()

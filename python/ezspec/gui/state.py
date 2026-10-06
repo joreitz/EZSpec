@@ -264,10 +264,13 @@ class Task(QtCore.QRunnable):
 
 
 def start_task(fn, on_done, on_failed, on_progress=None, *args, **kwargs) -> Task:
+    """Run ``fn(*args, **kwargs)`` in the thread pool. With ``on_progress`` the
+    function additionally receives ``progress=callable(i, n)`` (thread-safe)."""
     task = Task(fn, *args, **kwargs)
     task.signals.done.connect(on_done)
     task.signals.failed.connect(on_failed)
     if on_progress is not None:
         task.signals.progress.connect(on_progress)
+        task.kwargs["progress"] = task.signals.progress.emit
     QtCore.QThreadPool.globalInstance().start(task)
     return task

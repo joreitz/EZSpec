@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtGui import QUndoCommand, QUndoStack
 
@@ -531,3 +532,242 @@ class BootstrapDialog(QtWidgets.QDialog):
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         form.addRow(bb)
+
+
+# ============================================================================ series / global
+class SeriesDialog(QtWidgets.QDialog):
+    """Series fit (sequential, start values propagated) or global fit (shared parameters)."""
+
+    def __init__(self, state, parent=None):
+        import pyqtgraph as pg
+        super().__init__(parent)
+        self.setWindowTitle("Serie / globaler Fit")
+        self.state = state
+        self.series = None
+        self.global_result = None
+        self._task = None
+        cur = state.current()
+        lay = QtWidgets.QHBoxLayout(self)
+        left = QtWidgets.QVBoxLayout()
+        left.addWidget(QtWidgets.QLabel("Datensätze (Reihenfolge = Index):"))
+        self.ds_list = QtWidgets.QListWidget()
+        for ds in state.project.datasets:
+            it = QtWidgets.QListWidgetItem(ds.name)
+            it.setData(QtCore.Qt.UserRole, ds.id)
+            it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+            it.setCheckState(QtCore.Qt.Checked)
+            self.ds_list.addItem(it)
+        left.addWidget(self.ds_list, 1)
+        self.mode = QtWidgets.QComboBox()
+        self.mode.addItem("Serie: nacheinander, Startwerte weitergeben", "series")
+        self.mode.addItem("Serie: nacheinander, gleiche Startwerte", "series_fixed")
+        self.mode.addItem("Global: gleichzeitig mit geteilten Parametern", "global")
+        left.addWidget(self.mode)
+        self.apply_template = QtWidgets.QCheckBox(f"Pipeline + Modell von „{cur.name if cur else ''}“ auf alle "
+                                                  "anwenden")
+        self.apply_template.setChecked(True)
+        left.addWidget(self.apply_template)
+        self.index_from_name = QtWidgets.QCheckBox("Index = erste Zahl im Namen (z. B. Temperatur)")
+        left.addWidget(self.index_from_name)
+        left.addWidget(QtWidgets.QLabel("Geteilte Parameter (nur global):"))
+        self.shared = QtWidgets.QListWidget()
+        self.shared.setMaximumHeight(130)
+        if cur is not None:
+            for n in cur.model.param_names():
+                it = QtWidgets.QListWidgetItem(n)
+                it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+                it.setCheckState(QtCore.Qt.Unchecked)
+                self.shared.addItem(it)
+        left.addWidget(self.shared)
+        run = QtWidgets.QPushButton("Starten")
+        run.setObjectName("primary")
+        run.clicked.connect(self.run)
+        left.addWidget(run)
+        self.progress = QtWidgets.QProgressBar()
+        left.addWidget(self.progress)
+        lay.addLayout(left, 1)
+
+        right = QtWidgets.QVBoxLayout()
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Parameter:"))
+        self.param = QtWidgets.QComboBox()
+        self.param.currentIndexChanged.connect(self._plot)
+        row.addWidget(self.param, 1)
+        exp = QtWidgets.QPushButton("CSV exportieren…")
+        exp.clicked.connect(self._export)
+        row.addWidget(exp)
+        right.addLayout(row)
+        self.pw = pg.PlotWidget()
+        self.pw.showGrid(x=True, y=True, alpha=0.2)
+        right.addWidget(self.pw, 2)
+        self.table = QtWidgets.QTableWidget()
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        right.addWidget(self.table, 2)
+        self.report = QtWidgets.QPlainTextEdit()
+        self.report.setReadOnly(True)
+        self.report.setVisible(False)
+        right.addWidget(self.report, 2)
+        lay.addLayout(right, 2)
+        self.resize(1150, 720)
+
+    def _selected(self):
+        out = []
+        for i in range(self.ds_list.count()):
+            it = self.ds_list.item(i)
+            if it.checkState() == QtCore.Qt.Checked:
+                out.append(self.state.project.get(it.data(QtCore.Qt.UserRole)))
+        return out
+
+    def _index(self, datasets):
+        import re as _re
+        if self.index_from_name.isChecked():
+            vals = []
+            for i, ds in enumerate(datasets):
+                m = _re.search(r"[-+]?\d+(?:[.,]\d+)?", ds.name)
+                vals.append(float(m.group(0).replace(",", ".")) if m else float(i))
+            return np.array(vals)
+        return np.arange(len(datasets), dtype=float)
+
+    def run(self):
+        from ..fit import fit_global, fit_series
+        from .state import start_task
+        cur = self.state.current()
+        datasets = self._selected()
+        if cur is None or len(datasets) < 2:
+            QtWidgets.QMessageBox.information(self, "Serie", "Mindestens zwei Datensätze wählen.")
+            return
+        if self.apply_template.isChecked():
+            pipe = cur.pipeline.to_dict()
+            model = cur.model.to_dict()
+            opts = cur.fit_options.to_dict()
+            self.state.undo.beginMacro("Vorlage auf Serie anwenden")
+            for ds in datasets:
+                if ds is cur:
+                    continue
+                self.state.edit("pipeline", lambda p, d=pipe: p.steps.__setitem__(slice(None), type(p).from_dict(d).steps),
+                                "Pipeline übernehmen", ds=ds)
+                self.state.edit("model", lambda m, d=model: m.components.__setitem__(
+                    slice(None), type(m).from_dict(d).components), "Modell übernehmen", ds=ds)
+                self.state.edit("options", lambda o, d=opts: o.__dict__.update(d), "Optionen übernehmen", ds=ds)
+            self.state.undo.endMacro()
+        spectra = [self.state.run(ds).final for ds in datasets]
+        names = [ds.name for ds in datasets]
+        index = self._index(datasets)
+        mode = self.mode.currentData()
+        self.progress.setRange(0, len(datasets) if mode != "global" else 0)
+        if mode == "global":
+            shared = [self.shared.item(i).text() for i in range(self.shared.count())
+                      if self.shared.item(i).checkState() == QtCore.Qt.Checked]
+            models = [ds.model.copy() for ds in datasets]
+            task_fn = lambda progress=None: fit_global(spectra, models, shared, cur.fit_options)  # noqa: E731
+        else:
+            def task_fn(progress=None):
+                return fit_series(spectra, cur.model, cur.fit_options, propagate=(mode == "series"),
+                                  names=names, index=index, progress=progress)
+
+        def done(res):
+            self._task = None
+            self.progress.setRange(0, 1)
+            self.progress.setValue(1)
+            if mode == "global":
+                self.global_result = res
+                self.series = None
+                self.report.setVisible(True)
+                self.report.setPlainText(res.report())
+                self._fill_global(res, datasets)
+            else:
+                self.series = res
+                self.report.setVisible(False)
+                for ds, r in zip(datasets, res.results):
+                    if r is not None:
+                        ds.fit_result = r
+                        ds.fit_record = r.to_dict(include_curves=False)
+                        self.state.fitChanged.emit(ds.id)
+                self._fill_series(res)
+
+        def failed(msg):
+            self._task = None
+            self.progress.setRange(0, 1)
+            QtWidgets.QMessageBox.warning(self, "Serie", msg.split("\n\n")[0])
+
+        self._task = start_task(task_fn, done, failed, lambda i, n: self.progress.setValue(i))
+
+    def _fill_series(self, res):
+        rows = res.rows()
+        names = res.parameter_names()
+        self.param.blockSignals(True)
+        self.param.clear()
+        for n in names:
+            self.param.addItem(n)
+        self.param.blockSignals(False)
+        cols = ["name", "index", "success", "redchi", "s_res"] + [n for n in names if "." not in n]
+        self.table.setColumnCount(len(cols))
+        self.table.setRowCount(len(rows))
+        self.table.setHorizontalHeaderLabels(cols)
+        from ..fit.result import fmt_value
+        for i, r in enumerate(rows):
+            for j, c in enumerate(cols):
+                if c in names:
+                    txt = fmt_value(r.get(c), r.get(c + "_stderr"))
+                else:
+                    v = r.get(c, "")
+                    txt = f"{v:.5g}" if isinstance(v, float) else str(v)
+                self.table.setItem(i, j, QtWidgets.QTableWidgetItem(txt))
+        self.table.resizeColumnsToContents()
+        self._plot()
+
+    def _fill_global(self, res, datasets):
+        self.param.blockSignals(True)
+        self.param.clear()
+        bases = sorted({n.rsplit("_d", 1)[0] for n in res.params if "_d" in n})
+        for b in bases:
+            self.param.addItem(b)
+        self.param.blockSignals(False)
+        names = list(res.params)
+        self.table.setColumnCount(2)
+        self.table.setRowCount(len(names))
+        self.table.setHorizontalHeaderLabels(["Parameter", "Wert ± SE"])
+        from ..fit.result import fmt_value
+        for i, n in enumerate(names):
+            p = res.params[n]
+            self.table.setItem(i, 0, QtWidgets.QTableWidgetItem(n + ("  (geteilt)" if "_d" not in n else "")))
+            self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(fmt_value(p.value, p.stderr)))
+        self.table.resizeColumnsToContents()
+        self._global_n = len(datasets)
+        self._plot()
+
+    def _plot(self):
+        import pyqtgraph as pg
+        self.pw.clear()
+        name = self.param.currentText()
+        if not name:
+            return
+        if self.series is not None:
+            v, e = self.series.parameter(name)
+            x = self.series.index
+        elif self.global_result is not None:
+            r = self.global_result
+            x = np.arange(self._global_n, dtype=float)
+            v = np.array([r.params[f"{name}_d{i}"].value for i in range(self._global_n)])
+            e = np.array([r.params[f"{name}_d{i}"].stderr or np.nan for i in range(self._global_n)])
+        else:
+            return
+        ok = np.isfinite(v)
+        err = pg.ErrorBarItem(x=x[ok], y=v[ok], height=2 * np.nan_to_num(e[ok]), beam=0.0,
+                              pen=pg.mkPen("#3f90da"))
+        self.pw.addItem(err)
+        self.pw.plot(x[ok], v[ok], pen=pg.mkPen("#3f90da"), symbol="o", symbolSize=6, symbolBrush="#3f90da")
+        self.pw.setLabel("left", name)
+        self.pw.setLabel("bottom", "Index")
+
+    def _export(self):
+        if self.series is None and self.global_result is None:
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export", "serie.csv", "CSV (*.csv)")
+        if not path:
+            return
+        if self.series is not None:
+            self.series.to_csv(path)
+        else:
+            from ..export.results import write_parameters_csv
+            write_parameters_csv(self.global_result, path)
