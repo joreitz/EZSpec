@@ -97,6 +97,17 @@ def normalize(s: Spectrum, method, x_ref) -> Spectrum:
 
 
 # =========================================================================== units
+@operation("set_units", 1, "Einheiten / Achsentitel festlegen", "Einheiten",
+           params=[P("x_unit", "choice", "", "x-Einheit", choices=("",) + tuple(units.UNITS)),
+                   P("x_label", "str", "", "x-Achsentitel (leer = automatisch)"),
+                   P("y_unit", "str", "", "y-Einheit"),
+                   P("y_label", "str", "", "y-Achsentitel")])
+def set_units(s: Spectrum, x_unit, x_label, y_unit, y_label) -> Spectrum:
+    """Declare units and axis labels (metadata only; data are unchanged)."""
+    xl = x_label or units.AXIS_LABELS.get(x_unit, s.x_label)
+    return s.replace(x_unit=x_unit, x_label=xl, y_unit=y_unit or s.y_unit, y_label=y_label or s.y_label)
+
+
 @operation("convert_x", 1, "x-Einheit umrechnen", "Einheiten",
            params=[P("to", "choice", "eV", "Ziel-Einheit", choices=tuple(units.UNITS)),
                    P("from_unit", "choice", None, "Quell-Einheit (leer = aus Daten)",
