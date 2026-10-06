@@ -160,6 +160,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a.addAction("Profil-Konfidenzintervalle", self.run_profile)
         a.addAction("Bootstrap…", self.run_bootstrap)
         a.addAction("Baseline-Systematik (λ/Fenster variieren)", self.run_systematics)
+        a.addAction("MCMC-Posterior (emcee)…", self.run_mcmc)
         a.addSeparator()
         a.addAction("Serie / globaler Fit…", self.series_dialog, QtGui.QKeySequence("Ctrl+G"))
         a.addSeparator()
@@ -629,6 +630,29 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Baseline-Systematik", msg.split("\n\n")[0])
         self._task = start_task(baseline_systematics, done, failed, None, ds.raw, ds.pipeline.copy(),
                                 ds.model.copy(), type(ds.fit_options).from_dict(ds.fit_options.to_dict()))
+
+    def run_mcmc(self):
+        from ..fit import mcmc
+        ds = self._require_fit()
+        if ds is None or self._task is not None:
+            return
+        steps, ok = QtWidgets.QInputDialog.getInt(self, "MCMC", "Schritte pro Walker:", 3000, 200, 200000, 500)
+        if not ok:
+            return
+        self._busy(True, "MCMC läuft …")
+        result = ds.fit_result
+
+        def done(_res):
+            self._task = None
+            self._busy(False, "MCMC fertig.")
+            self.state.fitChanged.emit(ds.id)
+            self.results_panel.tabs.setCurrentIndex(4)
+
+        def failed(msg):
+            self._task = None
+            self._busy(False)
+            QtWidgets.QMessageBox.warning(self, "MCMC", msg.split("\n\n")[0])
+        self._task = start_task(mcmc, done, failed, None, result, steps, steps // 3, max(1, steps // 300))
 
     def remember_variant(self):
         ds = self._require_fit()

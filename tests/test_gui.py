@@ -141,7 +141,7 @@ def test_peaks_fit_statistics_and_analysis(app, win, tmp_path):
         add_peak(g, "gaussian", c.settings["center"].value, 10, 8)
     r2 = fit(w.state.run(ds).final, g, ds.fit_options)
     dlg = CompareDialog({"Lorentz": ds.fit_result, "Gauß": r2})
-    assert dlg is not None
+    assert dlg.null.count() == 2
     # figure dialog renders and edits are undoable
     fd = FigureDialog(ds, None, w)
     fd._set("panels.0.ylabel", "I (a.u.)")

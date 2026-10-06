@@ -506,10 +506,55 @@ class CompareDialog(QtWidgets.QDialog):
             note.setWordWrap(True)
             note.setObjectName("hint")
             lay.addWidget(note)
+        self.results = results
+        self._task = None
+        box = QtWidgets.QGroupBox("Verschachtelter Test „eine Komponente mehr“ (Simulation)")
+        form = QtWidgets.QFormLayout(box)
+        self.null = QtWidgets.QComboBox()
+        self.alt = QtWidgets.QComboBox()
+        order = sorted(results, key=lambda k: results[k].stats.n_varys)
+        for k in order:
+            self.null.addItem(f"{k} (p = {results[k].stats.n_varys})", k)
+            self.alt.addItem(f"{k} (p = {results[k].stats.n_varys})", k)
+        self.alt.setCurrentIndex(self.alt.count() - 1)
+        self.n_sim = QtWidgets.QSpinBox()
+        self.n_sim.setRange(20, 5000)
+        self.n_sim.setValue(200)
+        run = QtWidgets.QPushButton("Simulation starten")
+        run.clicked.connect(self._run_test)
+        self.bar = QtWidgets.QProgressBar()
+        self.out = QtWidgets.QLabel("Der nominelle LRT/F-Test ist am Parameterrand (Amplitude = 0) ungültig; "
+                                    "die p-Wert-Verteilung wird deshalb durch Simulation unter dem Nullmodell "
+                                    "bestimmt.")
+        self.out.setWordWrap(True)
+        form.addRow("Nullmodell", self.null)
+        form.addRow("Alternative", self.alt)
+        form.addRow("Replikate", self.n_sim)
+        form.addRow(run, self.bar)
+        form.addRow(self.out)
+        lay.addWidget(box)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
-        self.resize(620, 300)
+        self.resize(680, 520)
+
+    def _run_test(self):
+        from ..fit import simulate_nested_test
+        from .state import start_task
+        if self._task is not None:
+            return
+        r0 = self.results[self.null.currentData()]
+        r1 = self.results[self.alt.currentData()]
+        self.bar.setRange(0, self.n_sim.value())
+
+        def done(res):
+            self._task = None
+            self.out.setText("<br>".join(res["summary"]))
+
+        def failed(msg):
+            self._task = None
+            self.out.setText(f"<span style='color:#b3261e'>✖ {msg.splitlines()[0]}</span>")
+        self._task = start_task(simulate_nested_test, done, failed, self.bar.setValue, r0, r1, self.n_sim.value())
 
 
 class BootstrapDialog(QtWidgets.QDialog):

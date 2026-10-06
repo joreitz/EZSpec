@@ -14,7 +14,7 @@ Qt-Oberfläche (PySide6 + pyqtgraph), Publikationsfiguren mit matplotlib.
 | Baselines | Ankerpunkte im Plot (Median-Fenster/„Snap“, PCHIP/Akima/kubisch/linear), AsLS und arPLS mit gezeichneten Ausschluss- und Pflichtbereichen, SNIP, Rubberband, Polynom (auch modpoly/imodpoly). Live-Vorschau mit korrigiertem Spektrum. Baselines werden als Rezept gespeichert, nicht als Array. |
 | Fit-Statistik | Die σ-Quelle ist Pflichtangabe. χ² gibt es nur bei bekanntem σ, mit Erwartungsband 1 ± √(2/ν). Die Kovarianz ist bei bekanntem σ absolut; Skalieren mit √χ²_ν ist möglich, wird aber markiert. R² ist als deskriptiv gekennzeichnet. AIC/AICc/BIC werden in der zur σ-Quelle passenden Form berechnet. |
 | Diagnostik | Parameter am Bound, \|ρ\| > 0,9, Kondition der Jacobi-Matrix, Runs-Test, Lag-1-Autokorrelation, Normalitätsmaße, QQ-Plot. Warnungen bei Fits auf geglätteten, interpolierten oder normierten Daten und bei Neyman-Gewichtung σ = √y. |
-| Unsicherheiten | Volle Fehlerfortpflanzung für abgeleitete Größen (Höhe, exakte Voigt-FWHM, Fläche, Flächenanteile). Dazu Profil-Likelihood-CIs, Residuen- und Wild-Bootstrap sowie systematische Baseline-Unsicherheit über λ-Variation. |
+| Unsicherheiten | Volle Fehlerfortpflanzung für abgeleitete Größen (Höhe, exakte Voigt-FWHM, Fläche, Flächenanteile). Dazu Profil-Likelihood-CIs, Residuen- und Wild-Bootstrap, MCMC-Posterior (emcee, optional) sowie systematische Baseline-Unsicherheit über λ-Variation. |
 | Modelle | Flächennormierte Peaks (Gauß, Lorentz, exakter Voigt, Pseudo-Voigt, TCH, Pearson VII, EMG), linear mitfittbare Untergründe, klassische Funktionen und eigene Formeln mit beliebig vielen Parametern und unabhängigen Variablen. Constraints wie `p2_fwhm = p1_fwhm`. |
 | Serien | Serienfits mit Startwert-Weitergabe, globale Fits mit geteilten Parametern, Parameter-vs-Index-Plot. |
 | Reproduzierbarkeit | Einzeldatei-Projekt (Zip) mit bytegenauen Rohdaten. Skript-Export reproduziert Pipeline, Fit und Figur bitgenau aus den Rohdaten, geprüft per SHA-256. |
@@ -80,7 +80,8 @@ profile_ci(r)                                         # asymmetrische Konfidenzi
 
 Weitere Einstiegspunkte: `ezspec.Pipeline` (Schritte, Serialisierung, Caching),
 `ezspec.fit.fit_series`, `ezspec.fit.fit_global`, `ezspec.fit.compare`,
-`ezspec.fit.baseline_systematics`, `ezspec.project.Project`,
+`ezspec.fit.baseline_systematics`, `ezspec.fit.simulate_nested_test`, `ezspec.fit.mcmc`,
+`ezspec.project.Project`,
 `ezspec.export.figure` und `ezspec.export.script.generate_script`.
 
 ## Statistik-Semantik im Detail
@@ -95,8 +96,10 @@ Weitere Einstiegspunkte: `ezspec.Pipeline` (Schritte, Serialisierung, Caching),
 * **Poisson (σ² = Modell)**: Die iterativ umgewichtete Kleinste-Quadrate-Lösung ist der
   Poisson-Maximum-Likelihood-Schätzer (getestet). Für die Informationskriterien gilt −2 ln L = 2Σ(f − y ln f).
 * **Modellvergleich** nur bei identischen Daten, gleichem Bereich und gleicher Gewichtung; sonst wird er
-  verweigert. Gezeigt werden ΔAICc/ΔBIC und Akaike-Gewichte. „Ein Peak mehr“ nicht per F-Test
-  (Randproblem, Protassov et al. 2002).
+  verweigert. Gezeigt werden ΔAICc/ΔBIC und Akaike-Gewichte. „Ein Peak mehr“ wird nicht per F-Test
+  entschieden (Randproblem, Protassov et al. 2002), sondern über einen simulationskalibrierten
+  Likelihood-Quotienten-Test (parametrischer Bootstrap unter dem Nullmodell; `simulate_nested_test`).
+* **Poisson-Gewichtung**: Zusätzlich zum Pearson-χ² wird die Poisson-Devianz berichtet.
 * **Numerik**: lmfit/MINPACK findet das Minimum. Danach folgt eine Gauß-Newton-Nachverfeinerung mit
   Richardson-extrapolierter Jacobi-Matrix, und die Kovarianz wird per SVD aus dieser Matrix berechnet
   (mit Rang- und Konditionsprüfung).
@@ -117,7 +120,9 @@ Weitere Einstiegspunkte: `ezspec.Pipeline` (Schritte, Serialisierung, Caching),
   läuft zusätzlich ohne Rust-Kern.
 * **Ehrlichkeit der Fehlerbalken**: In einer Monte-Carlo-Studie (300 Wiederholungen) überdecken die
   68,3-%-Intervalle den wahren Wert im erwarteten Anteil, und ⟨χ²_ν⟩ ≈ 1. Profil-CI = lineare SE für
-  lineare Modelle; die Bootstrap-SD entspricht der skalierten SE.
+  lineare Modelle; die Bootstrap-SD entspricht der skalierten SE; die MCMC-68-%-Intervalle stimmen
+  bei gut bestimmten Fits mit der linearen SE überein. Der Simulationstest erzeugt keinen
+  Phantom-Peak und weist echte Peaks nach.
 * **Import**: JCAMP-DX wurde mit dem Paket `jcamp` auf 105 Beispieldateien abgeglichen. Dazu kommen
   Rundreise-Tests für AFFN/SQZ/DIF/DUP mit Y-Prüfwerten.
 * **Reproduzierbarkeit**: Das exportierte Skript liefert in einem separaten Prozess bitgleiche Parameter
@@ -153,8 +158,9 @@ das in den Paritätstests reproduzieren und macht die interaktiven Pfade schnell
 * Die Rust-LM-Innenschleife für Live-Fits großer Modelle und parallele Batches ist noch nicht
   umgesetzt; die Fits laufen über lmfit.
 * Hersteller-Formate (OPUS, WiRE, OMNIC, SPC) und JCAMP-NTUPLES (z. B. NMR-FIDs) fehlen noch.
-* Noch nicht implementiert: MCMC (emcee), Bayes-Evidenz, Cash-Statistik, Instrumentfunktion per
-  Faltung, simulationskalibrierter Test „ein Peak mehr“, Hyperspektral-Maps.
+* Noch nicht implementiert: Bayes-Evidenz (dynesty), Instrumentfunktion per Faltung,
+  Hyperspektral-Maps. Der simulationskalibrierte Test „ein Peak mehr“ ist lokal; es gibt keine
+  Look-elsewhere-Korrektur.
 * Die TCH-Koeffizienten stammen aus Sekundärquellen. Sie sind numerisch plausibilisiert, aber nicht
   gegen J. Appl. Cryst. 20, 79 (1987) geprüft.
 * Journal-Vorlagen: Maße laut Autorenrichtlinien (ohne Gewähr), vor Einreichung prüfen.

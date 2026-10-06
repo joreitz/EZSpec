@@ -15,6 +15,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+
 import lmfit
 import numpy as np
 from scipy import stats as sps
@@ -182,3 +185,75 @@ def bootstrap(fr, n_samples: int = 500, kind: str = "residual", seed: int | None
     res["summary"] = summary
     fr.extra["bootstrap"] = res
     return res
+
+
+def mcmc(fr, steps: int = 3000, burn: int = 1000, thin: int = 10, nwalkers: int | None = None,
+         seed: int | None = 0, max_derived: int = 2000) -> dict:
+    """Posterior sampling with emcee (via lmfit). Optional dependency: ``pip install emcee``.
+
+    Priors are flat within the parameter bounds (improper for unbounded
+    parameters). With sigma known the likelihood uses it; with sigma unknown
+    the noise level is sampled as ``__lnsigma``. Reports medians and the
+    central 68.27 % / 95.45 % credible intervals, also for derived peak
+    quantities, plus acceptance fraction and autocorrelation times.
+    """
+    try:
+        import emcee  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError("MCMC benötigt das Paket 'emcee' (pip install emcee)") from exc
+    it = fr._internals
+    model, x, y, w, variables = it["model"], it["x"], it["y"], it["w"], it.get("variables")
+    best = it["best_params"].copy()
+    is_weighted = fr.stats.chi2 is not None
+
+    def residual(p):
+        return (y - model.evaluate(x, p, variables)) * w
+
+    nvar = sum(1 for p in best.values() if p.vary)
+    walkers = nwalkers or max(2 * nvar + 2, 32)
+    mini = lmfit.Minimizer(residual, best, nan_policy="omit")
+    note = io.StringIO()
+    with contextlib.redirect_stdout(note):          # lmfit prints emcee's autocorrelation warning
+        res = mini.emcee(params=best, steps=steps, burn=burn, thin=thin, nwalkers=walkers,
+                         is_weighted=is_weighted, seed=seed, progress=False)
+    cols = list(res.var_names)
+    arr = np.asarray(res.chain).reshape(-1, len(cols))
+    q = (2.275, 15.865, 50.0, 84.135, 97.725)
+    out = {"params": {}, "derived": {}, "n_samples": int(arr.shape[0]), "nwalkers": walkers,
+           "acceptance": float(np.mean(res.acceptance_fraction)), "is_weighted": is_weighted}
+    acor = getattr(res, "acor", None)
+    summary = [f"emcee: {walkers} Walker, {steps} Schritte (Burn-in {burn}, Ausdünnung {thin}), "
+               f"{arr.shape[0]} Stichproben, Akzeptanz {out['acceptance']:.2f}; flache Priors in den Grenzen"]
+    if note.getvalue().strip():
+        summary.append("Hinweis: Kette evtl. zu kurz für verlässliche Autokorrelationszeiten – mehr Schritte.")
+        out["warning"] = note.getvalue().strip()
+    for j, name in enumerate(cols):
+        v = np.percentile(arr[:, j], q)
+        d = {"median": float(v[2]), "ci68": (float(v[1]), float(v[3])), "ci95": (float(v[0]), float(v[4]))}
+        if acor is not None and j < len(acor):
+            d["autocorr_time"] = float(acor[j])
+        out["params"][name] = d
+        summary.append(f"{name}: Median {v[2]:.6g}, 68 % [{v[1]:.6g}, {v[3]:.6g}], 95 % [{v[0]:.6g}, {v[4]:.6g}]"
+                       + (f", τ_int ≈ {d['autocorr_time']:.0f}" if "autocorr_time" in d else ""))
+    peaks = model.peaks
+    if peaks:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(arr.shape[0], size=min(max_derived, arr.shape[0]), replace=False)
+        work = best.copy()
+        samples = {}
+        for i in idx:
+            for j, name in enumerate(cols):
+                if name in work:
+                    work[name].value = float(arr[i, j])
+            work.update_constraints()
+            vals = {k: p.value for k, p in work.items()}
+            for c in peaks:
+                for k, v in c.derived(vals).items():
+                    samples.setdefault(f"{c.prefix.rstrip('_')}.{k}", []).append(v)
+        for key, vals in samples.items():
+            v = np.percentile(vals, q)
+            out["derived"][key] = {"median": float(v[2]), "ci68": (float(v[1]), float(v[3])),
+                                   "ci95": (float(v[0]), float(v[4]))}
+    out["summary"] = summary
+    fr.extra["mcmc"] = out
+    return out

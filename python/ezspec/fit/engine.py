@@ -423,10 +423,11 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
             corr = covar / np.outer(d, d)
     se_vary = dict(zip(names, np.sqrt(np.clip(np.diag(covar), 0, None)))) if covar is not None else {}
 
-    neg2ll = None
+    neg2ll = deviance = None
     if weighting == "poisson_model":
         with np.errstate(divide="ignore", invalid="ignore"):
             neg2ll = float(2 * np.sum(f - np.where(y > 0, y * np.log(f), 0.0)))
+            deviance = float(2 * np.sum(np.where(y > 0, y * np.log(y / f), 0.0) - (y - f)))
     ic = S.information_criteria(n, p, rss, chi2, sigma_known, neg2ll)
     r2 = S.r_squared(y, f, p)
 
@@ -529,7 +530,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         aic=ic["aic"], aicc=ic["aicc"], bic=ic["bic"], ic_form=ic["form"], ic_k=ic["k"],
         chi2=chi2, redchi=redchi, redchi_band=band, chi2_pvalue=pval, runs=runs,
         lag1_autocorr=lag1, durbin_watson=S.durbin_watson(zdiag), normality=S.normality(zdiag),
-        jacobian_condition=cond,
+        jacobian_condition=cond, poisson_deviance=deviance,
     )
     if np.isnan(ic["aicc"]):
         warnings.append(FitWarning("AICC_UNDEFINED", "AICc undefiniert (K ≥ N − 1).", "info"))

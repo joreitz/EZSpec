@@ -77,6 +77,7 @@ class FitStatistics:
     durbin_watson: float = float("nan")
     normality: dict = field(default_factory=dict)
     jacobian_condition: float = float("nan")
+    poisson_deviance: float | None = None       # 2 sum[y ln(y/f) - (y - f)], ~ chi2_nu for Poisson data
 
     @property
     def sigma_known(self) -> bool:
@@ -262,6 +263,9 @@ def format_report(r: FitResult) -> str:
         L.append(f"  χ² = {_g(st.chi2)}   χ²_ν = {_g(st.redchi, '.4g')}   "
                  f"(erwartet 1, 1σ-Band [{lo:.3g}, {hi:.3g}])")
         L.append(f"  P(χ² ≥ beobachtet) ≈ {_g(st.chi2_pvalue, '.3g')}  (Näherung: linear, Gauß, σ exakt)")
+        if st.poisson_deviance is not None:
+            L.append(f"  Poisson-Devianz D = {_g(st.poisson_deviance)}   D/ν = {_g(st.poisson_deviance / st.dof, '.4g')}"
+                     "  (Pearson-χ² oben)")
     else:
         L.append("  χ²: nicht definiert (σ unbekannt) – stattdessen:")
     L.append(f"  RSS = {_g(st.rss)}   s = √(RSS/ν) = {_g(st.s_res)}   RMSE = √(RSS/N) = {_g(st.rmse)}")
@@ -298,6 +302,7 @@ def format_report(r: FitResult) -> str:
             L.append(f"  [{tag}] {w.message}")
     for key, title in (("profile_ci", "Profil-Likelihood-Konfidenzintervalle"),
                        ("bootstrap", "Bootstrap"),
+                       ("mcmc", "MCMC-Posterior (emcee)"),
                        ("baseline_systematics", "Systematische Unsicherheit durch die Baseline")):
         if key in r.extra:
             L.append("")

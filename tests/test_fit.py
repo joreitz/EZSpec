@@ -309,3 +309,54 @@ def test_baseline_systematics_reports_spread():
     area = res["table"]["p1_area"]
     assert len(area["values"]) == 3 and area["systematic"] >= 0
     assert any("syst., Baseline" in line for line in res["summary"])
+
+
+@pytest.mark.slow
+def test_simulated_nested_test_calibration():
+    from ezspec.fit import simulate_nested_test
+    x = np.linspace(0, 100, 300)
+    rng_ = np.random.default_rng(11)
+    sigma = 0.05
+    y = ls.gaussian(x, 30, 40, 5) + rng_.normal(scale=sigma, size=x.size)       # no second peak
+    s = spectrum(x, y, sigma=np.full_like(x, sigma))
+    m0 = Model()
+    add_peak(m0, "gaussian", 40, 2, 5)
+    m1 = m0.copy()
+    add_peak(m1, "gaussian", 70, 0.05, 5)
+    m1.component("p2_").settings["area"].min = 0.0                               # boundary problem
+    r0, r1 = fit(s, m0), fit(s, m1)
+    res = simulate_nested_test(r0, r1, n_sim=150, seed=2)
+    assert res["n"] >= 140 and 0.0 < res["p_value"] <= 1.0
+    assert res["p_value"] > 0.01                     # no evidence for a peak that is not there
+    # with a real second peak the evidence is overwhelming
+    y2 = y + ls.gaussian(x, 1.0, 70, 5)
+    s2 = spectrum(x, y2, sigma=np.full_like(x, sigma))
+    res2 = simulate_nested_test(fit(s2, m0), fit(s2, m1), n_sim=50, seed=3)
+    assert res2["p_value"] < 0.05
+
+
+def test_poisson_deviance_reported():
+    x = np.linspace(0, 10, 200)
+    counts = np.random.default_rng(1).poisson(3 + ls.gaussian(x, 80, 5, 1.5)).astype(float)
+    m = Model()
+    add_peak(m, "gaussian", 5, 15, 2)
+    m.add("constant", c=2.0)
+    r = fit(spectrum(x, counts), m, FitOptions(weighting="poisson_model"))
+    assert r.stats.poisson_deviance / r.stats.dof == pytest.approx(1.0, abs=0.35)
+    assert "Poisson-Devianz" in r.report()
+
+
+def test_mcmc_agrees_with_linear_errors_for_a_well_determined_fit():
+    pytest.importorskip("emcee")
+    from ezspec.fit import mcmc
+    x = np.linspace(0, 100, 300)
+    y = ls.gaussian(x, 30, 40, 5) + np.random.default_rng(5).normal(scale=0.05, size=x.size)
+    m = Model()
+    add_peak(m, "gaussian", 40, 2, 5)
+    r = fit(spectrum(x, y, sigma=np.full_like(x, 0.05)), m)
+    out = mcmc(r, steps=1500, burn=500, thin=5, seed=1)
+    lo, hi = out["params"]["p1_center"]["ci68"]
+    assert (hi - lo) / 2 == pytest.approx(r.stderr("p1_center"), rel=0.15)
+    assert out["params"]["p1_area"]["median"] == pytest.approx(r.value("p1_area"), abs=r.stderr("p1_area"))
+    assert "p1.height" in out["derived"] and 0.1 < out["acceptance"] < 0.9
+    assert "MCMC" in r.report()
