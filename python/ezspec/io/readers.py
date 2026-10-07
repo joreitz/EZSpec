@@ -53,7 +53,8 @@ def read_spectra(path, x_col: int = 0, y_cols=None, sigma_col: int | None = None
                 "jcamp": {k: v for k, v in d["labels"].items() if len(v) < 200},
                 "import_warnings": d["warnings"]}
         s = Spectrum(x, d["y"], x_unit=x_unit or unit, y_unit=d["y_units"].lower(),
-                     x_label=d["x_units"] or "x", y_label=d["y_units"] or "y", meta=meta).sorted()
+                     x_label=d["x_units"] or "x", y_label=d["y_units"] or "y", meta=meta,
+                     aux={"acq_index": np.arange(len(x), dtype=float)}).sorted()
         return [s]
     info = parse_table(text, delimiter=delimiter, decimal=decimal)
     data = info.data
@@ -72,6 +73,7 @@ def read_spectra(path, x_col: int = 0, y_cols=None, sigma_col: int | None = None
                 "decimal": info.decimal, "extra_cols": extra_cols}
         sigma = data[:, sigma_col] if sigma_col is not None else None
         aux = {f"var:{k}": data[:, v] for k, v in (extra_cols or {}).items()}
+        aux["acq_index"] = np.arange(len(data), dtype=float)     # acquisition order (rows of the file)
         good = np.isfinite(data[:, x_col]) & np.isfinite(data[:, c])
         if sigma is not None:
             good &= np.isfinite(sigma) & (sigma > 0)

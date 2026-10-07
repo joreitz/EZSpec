@@ -99,6 +99,18 @@ class LogSlider(QtWidgets.QWidget):
         self.valueChanged.emit(v, True)
 
 
+def _dict_summary(d) -> str:
+    """Read-only description of a structured parameter (e.g. a calibration)."""
+    if not d:
+        return "— (nicht gesetzt)"
+    if d.get("format") == "ezspec.calibration":
+        dom = d.get("domain", {})
+        rng = ", ".join(f"{k} ∈ [{a:.6g}, {b:.6g}]" for k, (a, b) in dom.items())
+        return (f"aus „{d.get('source', '')}“: {d.get('expression', '')}\n"
+                f"{d.get('n_points', '?')} Punkte · {rng}")
+    return f"{len(d)} Einträge"
+
+
 class ParamForm(QtWidgets.QWidget):
     changed = QtCore.Signal(str, object, bool)       # name, value, final
     rangeTarget = QtCore.Signal(str)                 # 'ranges' parameter edited by the plot tool
@@ -227,6 +239,11 @@ class ParamForm(QtWidgets.QWidget):
             w.label = lab
             lab.setText(f"{len(value or [])} – Werkzeug 'Anker'")
             return w
+        if p.kind == "dict":
+            w = QtWidgets.QLabel(_dict_summary(value))
+            w.setWordWrap(True)
+            w.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+            return w
         raise ValueError(p.kind)
 
     def _emit(self, name, value, final):
@@ -269,6 +286,8 @@ class ParamForm(QtWidgets.QWidget):
                     w.label.setText(f"{len(v or [])}×")
                 elif p.kind == "anchors":
                     w.label.setText(f"{len(v or [])} – Werkzeug 'Anker'")
+                elif p.kind == "dict":
+                    w.setText(_dict_summary(v))
             finally:
                 w.blockSignals(False)
         self._update_hint()

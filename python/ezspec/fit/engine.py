@@ -298,6 +298,18 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
     for flag, (code, msg, sev) in flag_warnings.items():
         if flag in spectrum.flags:
             warnings.append(FitWarning(code, msg, sev))
+    from ..sweeps import count_sweeps, is_multivalued
+    if is_multivalued(spectrum) and not model.independent_variables:   # y(x, v): repeats in x are expected
+        c = count_sweeps(spectrum)
+        warnings.append(FitWarning("MULTI_SWEEP", f"Daten enthalten mehrere Durchläufe ({c['up']} steigend, "
+                                   f"{c['down']} fallend): x ist mehrdeutig. Hin- und Rückweg getrennt auswerten "
+                                   "(Schritt 'Durchläufe auswählen' oder 'mitteln').", "warning"))
+    cal = spectrum.meta.get("calibration")
+    if "x_calibrated" in spectrum.flags and cal:
+        warnings.append(FitWarning("X_CALIBRATION", f"x-Achse kalibriert ({cal.get('source', '')}): systematische "
+                                   f"Kalibrierunsicherheit σ_x,cal ≈ {cal.get('sigma_median', float('nan')):.3g} "
+                                   f"(max. {cal.get('sigma_max', float('nan')):.3g}) ist nicht in den Fehlern "
+                                   "enthalten; Lageparameter erben sie vollständig.", "info"))
     if sigma_known and source is SigmaSource.POISSON_DATA:
         warnings.append(FitWarning("NEYMAN_WEIGHTS", "σ = √y (Neyman) verzerrt Amplituden und Flächen nach "
                                    "unten, auch bei hohen Zählraten (Humphrey et al. 2009). Besser "

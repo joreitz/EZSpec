@@ -164,3 +164,55 @@ def find_peaks(x, y, prominence: float | None = None, min_fwhm: float | None = N
         out.append(PeakGuess(float(x[i]), float(prom), fwhm, float(prom)))
     out.sort(key=lambda p: -p.prominence)
     return sorted(out[:max_peaks], key=lambda p: p.center)
+
+
+# ----------------------------------------------------------------------------- surfaces
+SURFACES = {
+    "plane": "Ebene: c0 + cx·(x−x0) + cv·(v−v0)",
+    "bilinear": "Ebene + Wechselwirkung: … + cxv·(x−x0)(v−v0)",
+    "quad_x": "quadratisch in x: … + cxx·(x−x0)²",
+    "quadratic": "voll quadratisch: … + cxx·(x−x0)² + cvv·(v−v0)² + cxv·(x−x0)(v−v0)",
+}
+
+
+def _nice(v: float) -> float:
+    """Round a reference point to two significant digits (readable formula)."""
+    if v == 0 or not np.isfinite(v):
+        return 0.0
+    return float(f"{v:.2g}")
+
+
+def surface_expression(kind: str, var: str, x0: float = 0.0, v0: float = 0.0) -> str:
+    """Polynomial surface y(x, var) in centred coordinates. Centring at a point
+    inside the data makes c0 the value at (x0, v0) and keeps the parameters
+    weakly correlated."""
+    if kind not in SURFACES:
+        raise ValueError(f"unbekannte Fläche {kind!r}")
+
+    def centred(name, c):
+        c = _nice(c)
+        if c == 0:
+            return name
+        return f"({name} - {c:g})" if c > 0 else f"({name} + {-c:g})"
+
+    dx, dv = centred("x", x0), centred(var, v0)
+    terms = ["c0", f"cx*{dx}", f"c{var}*{dv}"]
+    if kind in ("bilinear", "quadratic"):
+        terms.append(f"cx{var}*{dx}*{dv}")
+    if kind in ("quad_x", "quadratic"):
+        terms.append(f"cxx*{dx}**2")
+    if kind == "quadratic":
+        terms.append(f"c{var}{var}*{dv}**2")
+    return " + ".join(terms)
+
+
+def add_surface(model: Model, kind: str, var: str, x0: float = 0.0, v0: float = 0.0, y0: float = 0.0,
+                prefix: str = ""):
+    """Add a polynomial surface y(x, var) as a formula component."""
+    from .formula import Formula
+    expr = surface_expression(kind, var, x0, v0)
+    defaults = {p: 0.0 for p in Formula(expr, ["x", var]).parameters}
+    defaults["c0"] = float(y0)
+    return model.add("formula", prefix=prefix,
+                     options={"expression": expr, "independent": ["x", var], "defaults": defaults},
+                     label=SURFACES[kind].split(":")[0])

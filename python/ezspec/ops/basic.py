@@ -208,7 +208,7 @@ def resample(s: Spectrum, step, n, method) -> Spectrum:
         A = _hat_operator(s.x, xn, "mean", edges)
     yn = A @ s.y
     sig = None if s.sigma is None else np.sqrt(A.multiply(A) @ (s.sigma**2))
-    aux = {k: A @ v for k, v in s.aux.items()}
+    aux = {k: A @ v for k, v in s.aux.items() if k != "acq_index"}     # acquisition order is lost
     return Spectrum(xn, yn, sig, s.sigma_source if sig is not None else SigmaSource.UNKNOWN,
                     s.x_unit, s.y_unit, s.x_label, s.y_label, None, s.meta, s.flags, aux)
 

@@ -108,21 +108,32 @@ def set_path(spec, path: str, value):
 # ============================================================================ curves
 def curves_for(processed, raw=None, result=None, model=None, n_dense: int = 2000) -> dict:
     """All plottable curves of one dataset: name -> (x, y, yerr or None)."""
+    from ..sweeps import display_order, display_order_masked
+
+    def ordered(order, *arrays):
+        # back-and-forth (multi-sweep) data are listed in acquisition order so
+        # that line traces follow the ramps instead of zigzagging between them
+        if order is None:
+            return arrays
+        return tuple(None if a is None else np.asarray(a)[order] for a in arrays)
+
     c = {}
-    c["processed"] = (processed.x, processed.y, processed.sigma)
+    po = display_order(processed)
+    c["processed"] = ordered(po, processed.x, processed.y, processed.sigma)
     if raw is not None:
-        c["raw"] = (raw.x, raw.y, raw.sigma)
+        c["raw"] = ordered(display_order(raw), raw.x, raw.y, raw.sigma)
     for k in ("baseline", "baseline_total", "smoothed"):
         if k in processed.aux:
-            c[k] = (processed.x, processed.aux[k], None)
+            c[k] = ordered(po, processed.x, processed.aux[k], None)
     if "baseline_total" in processed.aux:
-        c["processed_plus_baseline"] = (processed.x, processed.y + processed.aux["baseline_total"], None)
+        c["processed_plus_baseline"] = ordered(po, processed.x, processed.y + processed.aux["baseline_total"], None)
     if result is not None:
-        c["fit"] = (result.x, result.best_fit, None)
-        c["residuals"] = (result.x, result.residuals, None)
-        c["normalized_residuals"] = (result.x, result.normalized_residuals, None)
+        ro = display_order_masked(processed, result.mask) if len(result.mask) == processed.n else None
+        c["fit"] = ordered(ro, result.x, result.best_fit, None)
+        c["residuals"] = ordered(ro, result.x, result.residuals, None)
+        c["normalized_residuals"] = ordered(ro, result.x, result.normalized_residuals, None)
         for k, v in result.components.items():
-            c[f"component:{k}"] = (result.x, v, None)
+            c[f"component:{k}"] = ordered(ro, result.x, v, None)
         mdl = model if model is not None else result._internals.get("model")
         if mdl is not None and not mdl.independent_variables and len(result.x) > 1:
             xd = np.linspace(result.x.min(), result.x.max(), max(n_dense, 4 * len(result.x)))
@@ -132,6 +143,13 @@ def curves_for(processed, raw=None, result=None, model=None, n_dense: int = 2000
                 c[f"component_dense:{k}"] = (xd, v, None)
         else:
             c["fit_dense"] = c["fit"]
+    # y(x, v) data (e.g. a calibration surface): one curve per value of v
+    from ..slices import slice_curves
+    mdl = model if model is not None else (result._internals.get("model") if result is not None else None)
+    for it in slice_curves(processed, mdl, result.values if result is not None else None):
+        c[f"slice_data:{it['label']}"] = (it["x"], it["y"], it["sigma"])
+        if it["xd"] is not None:
+            c[f"slice_fit:{it['label']}"] = (it["xd"], it["yd"], None)
     return c
 
 
@@ -151,9 +169,20 @@ def default_spec(source: str, curves: dict, x_label: str = "", y_label: str = ""
     spec = new_spec(preset)
     main = new_panel(3.0, xlabel=x_label, ylabel=y_label)
     n = len(curves["processed"][0])
-    main["traces"].append(new_trace(source, "processed", "scatter" if n <= 400 else "line", label=name,
-                                    color="#555555", lw=0.8, ms=2.0, zorder=1))
-    if "fit" in curves:
+    slices = [k.split(":", 1)[1] for k in curves if k.startswith("slice_data:")]
+    if slices:
+        cyc = color_cycle(spec.get("colors", "petroff10"))
+        for i, lab in enumerate(slices):
+            col = cyc[i % len(cyc)]
+            fit_key = f"slice_fit:{lab}"
+            main["traces"].append(new_trace(source, f"slice_data:{lab}", "scatter", color=col, ms=2.5, zorder=1,
+                                            label="" if fit_key in curves else lab))
+            if fit_key in curves:
+                main["traces"].append(new_trace(source, fit_key, "line", label=lab, color=col, lw=1.0, zorder=3))
+    else:
+        main["traces"].append(new_trace(source, "processed", "scatter" if n <= 400 else "line", label=name,
+                                        color="#555555", lw=0.8, ms=2.0, zorder=1))
+    if "fit" in curves and not slices:
         comps = [k for k in curves if k.startswith("component_dense:")]
         if components and len(comps) > 1:
             for k in comps:
@@ -167,7 +196,7 @@ def default_spec(source: str, curves: dict, x_label: str = "", y_label: str = ""
         rk = "normalized_residuals" if normalized else "residuals"
         rp = new_panel(1.0, xlabel=x_label, ylabel="Res./σ" if normalized else "Residuals", legend=None,
                        zero_line=True, minor_ticks=True)
-        rp["traces"].append(new_trace(source, rk, "scatter" if n <= 400 else "line", color="#555555",
+        rp["traces"].append(new_trace(source, rk, "scatter" if n <= 400 or slices else "line", color="#555555",
                                       lw=0.6, ms=1.5))
         spec["panels"].append(rp)
     return spec

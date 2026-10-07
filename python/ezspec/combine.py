@@ -217,6 +217,7 @@ def combine(datasets: dict, x_expr: str = "x", y_expr: str = "a", mode: str = "a
         X = fx(*args)
         Y = fy(*args)
     report = {"alignment": al["mode"], "warnings": list(al["warnings"]), "n_input": int(len(al["x"]))}
+    ref_spec = spectra[ref_i]
 
     y_inputs = [a for a, k in zip(aliases, data_idx) if a in _names_in(y_expr)]
     have_sigma_y = all(al["sigmas"][aliases.index(a)] is not None for a in y_inputs) and bool(y_inputs)
@@ -258,6 +259,8 @@ def combine(datasets: dict, x_expr: str = "x", y_expr: str = "a", mode: str = "a
     xg, yg = X[good][order], Y[good][order]
     sg = None if sy is None else sy[good][order]
     eg = al["exclude"][good][order]
+    if al["mode"] in ("exact", "index") and "acq_index" in ref_spec.aux:
+        aux["acq_index"] = np.asarray(ref_spec.aux["acq_index"])[good]   # keep acquisition order
     aux = {k: v[order] for k, v in aux.items()}
     if nonmono:
         report["warnings"].append("neue x-Werte sind nicht monoton in der Aufnahmereihenfolge – Punkte wurden "

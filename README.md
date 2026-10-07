@@ -56,7 +56,28 @@ Ohne kompilierten Kern läuft alles mit der NumPy/SciPy-Referenzimplementierung
    Datensätze erhalten Kurznamen (a, b, c, …). Neue x- und y-Achse sind beliebige Formeln dieser Namen;
    `x` ist das gemeinsame x, `x_a` das x von Datensatz a. Diagnose und Vorschau laufen live; das Ergebnis
    wird ein neuer Datensatz mit eigener Pipeline und eigenem Fit.
-6. **Export**: *Datei → Exportieren*: Abbildung (Editor mit Journal-Vorlagen), Ergebnistabellen
+6. **Hin- und Rückmessung** (z. B. Stromrampe einer TDLAS): Die Aufnahmereihenfolge wird beim Import
+   gespeichert. Daten mit mehreren Durchläufen zeichnet der Plot in dieser Reihenfolge, also als
+   getrennte Rampen statt als Zickzack zwischen ihnen. Schalter *Punkte* in der Plot-Leiste zeichnet
+   Punkte statt einer Linie. Die Schritte *Bereich → Durchläufe auswählen* (steigend/fallend, einzelne
+   Nummer) und *Durchläufe mitteln* trennen die Richtungen. Steigende und fallende Rampen werden nie
+   gemischt: Bei thermischer Hysterese gehören zum selben Strom verschiedene Wellenlängen. Beim Mitteln
+   ist σ = Streuung der Durchläufe / √n. Glättung und Baselines auf gemischten Rampen sowie Fits darauf
+   erzeugen eine Warnung.
+7. **Kalibrierfläche und x-Kalibrierung** (z. B. λ(I, T) eines Lasers): Kalibrierdaten mit
+   x = Strom, y = Wellenlänge importieren und die Temperatur-Spalte unter *zusätzl. Variablen* wählen.
+   Der Plot zeigt eine Punktgruppe je Temperatur. Dann *+ Komponente → Fläche f(x, v)* (Ebene,
+   Ebene + Wechselwirkung, quadratisch in x, voll quadratisch; zentriert, damit die Parameter wenig
+   korreliert sind) und fitten. Der Plot zeigt danach je T den Schnitt λ(I; T). Mit
+   *Analyse → Fit als x-Kalibrierung anwenden* (oder *+ Schritt → Einheiten → x kalibrieren…* im
+   Zieldatensatz) setzt man feste Werte (z. B. T = 25 ± 0,02). Leer bleibt ein Wert, wenn er aus einer
+   Spalte der Zieldaten je Punkt kommen soll. Jeder gewählte Datensatz bekommt den Schritt
+   `calibrate_x`. Die systematische Kalibrierunsicherheit σ_x,cal (Delta-Methode aus der
+   Fit-Kovarianz plus Unsicherheit der festen Werte) wird angezeigt, in `aux["sigma_x_cal"]`
+   gespeichert und in jedem Fit als Hinweis gemeldet. Als zufälliges σ_x geht sie nicht ein, weil sie
+   alle Punkte gemeinsam verschiebt. Punkte außerhalb der konvexen Hülle der Kalibrierpunkte werden
+   als Extrapolation gemeldet. Eine im Datenbereich nicht monotone Abbildung wird abgelehnt.
+8. **Export**: *Datei → Exportieren*: Abbildung (Editor mit Journal-Vorlagen), Ergebnistabellen
    (CSV/JSON/Bericht), Python-Skript. *Analyse → Serie / globaler Fit* (Strg+G).
 
 ## Skript-API
@@ -87,8 +108,32 @@ Weitere Einstiegspunkte: `ezspec.Pipeline` (Schritte, Serialisierung, Caching),
 `ezspec.fit.fit_series`, `ezspec.fit.fit_global`, `ezspec.fit.compare`,
 `ezspec.fit.baseline_systematics`, `ezspec.fit.simulate_nested_test`, `ezspec.fit.mcmc`,
 `ezspec.combine.combine` (Datensätze verrechnen),
+`ezspec.sweeps` / `ops.select_sweeps` / `ops.average_sweeps` (Hin-/Rückmessungen),
+`ezspec.models.add_surface`, `ezspec.calibration.calibration_from_fit` und `ops.calibrate_x`
+(Kalibrierflächen, x-Kalibrierung),
 `ezspec.project.Project`,
 `ezspec.export.figure` und `ezspec.export.script.generate_script`.
+
+Beispiel x-Kalibrierung über eine Ebene λ(I, T):
+
+```python
+from ezspec import Model, ops
+from ezspec.calibration import calibration_from_fit
+from ezspec.fit import fit
+from ezspec.io import read_file
+from ezspec.models import add_surface
+
+cal_data = read_file("kalibrierung.csv", y_cols=[2], extra_cols={"T": 1})   # x = I, y = λ, Spalte 1 = T
+m = Model()
+add_surface(m, "plane", "T", x0=50, v0=25)          # c0 + cx*(x - 50) + cT*(T - 25)
+r = fit(cal_data, m)
+cal = calibration_from_fit(r, cal_data, "Laser A")
+
+s = read_file("messung.csv")
+s = ops.select_sweeps(s, direction="up", sweep=0)  # nur eine steigende Rampe
+s = ops.calibrate_x(s, calibration=cal, fixed="T=25", fixed_sigma="T=0.02")
+s.meta["calibration"]["sigma_max"]                  # systematische Unsicherheit der neuen x-Achse
+```
 
 ## Statistik-Semantik im Detail
 

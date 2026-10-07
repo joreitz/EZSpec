@@ -128,3 +128,21 @@ class Formula:
 
     def __repr__(self):
         return f"Formula({self.expression!r}, params={self.parameters})"
+
+
+def variable_name(label: str, taken=()) -> str:
+    """A valid, non-reserved formula identifier from a column header,
+    e.g. 'T / °C' -> 'T', 'laser temp. (K)' -> 'laser_temp'."""
+    import keyword
+    import re
+    base = re.split(r"\s*[/\[(]", str(label).strip(), maxsplit=1)[0]
+    name = re.sub(r"\W+", "_", base, flags=re.ASCII).strip("_") or "v"
+    if name[0].isdigit():
+        name = "v_" + name
+    if name in FUNCTIONS or name in CONSTANTS or name == "x" or keyword.iskeyword(name):
+        name = name + "_v"
+    out, i = name, 2
+    while out in taken:
+        out = f"{name}{i}"
+        i += 1
+    return out

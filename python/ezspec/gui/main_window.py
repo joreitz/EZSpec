@@ -17,13 +17,26 @@ from ..fit import bootstrap, fit, profile_ci
 from ..models import add_peak, find_peaks
 from ..ops.baseline import anchor_values
 from ..project import Dataset, Project
+from ..slices import grouped_by_slices, slice_curves, slice_variable
+from ..sweeps import display_order, display_order_masked
 from . import peak_edit
-from .dialogs import BootstrapDialog, CombineDialog, CompareDialog, FigureDialog, ImportDialog, SeriesDialog
+from .dialogs import (BootstrapDialog, CalibrationDialog, CombineDialog, CompareDialog, FigureDialog,
+                      ImportDialog, SeriesDialog)
 from .model_panel import ModelPanel
 from .pipeline_panel import DatasetsPanel, PipelinePanel
 from .plot_view import PlotView
 from .results_panel import ResultsPanel
 from .state import AppState, start_task
+
+
+def _disp(s, *arrays):
+    """Arrays of spectrum ``s`` in drawing order: acquisition order for
+    back-and-forth (multi-sweep) data, so up and down ramps are drawn as
+    separate traces instead of a zigzag between them."""
+    o = display_order(s)
+    if o is None:
+        return arrays
+    return tuple(np.asarray(a)[o] for a in arrays)
 
 STATS_HELP = """<h3>Wie EZSpec Fit-Güte berichtet</h3>
 <ul>
@@ -58,6 +71,10 @@ Bereich (Masken, Pflichtbereiche, Rausch-/Fitbereich) · Peak.</li>
 <li><b>Fit</b>: Strg+R. Ergebnis-Panel: Statistik, Warnungen, abgeleitete Größen, Korrelationen, Residuen.</li>
 <li><b>Verrechnen</b>: Strg+K – Quotient, Differenz oder beliebige x/y-Formeln aus mehreren Datensätzen
 (σ wird fortgepflanzt, Ausrichtung automatisch geprüft).</li>
+<li><b>Hin/zurück</b> (z. B. Stromrampe): Darstellung in Aufnahmereihenfolge; „+ Schritt → Bereich →
+Durchläufe auswählen/mitteln“ trennt steigende und fallende Rampen.</li>
+<li><b>Kalibrierung</b> (z. B. λ(I, T)): Spalte T beim Import als zusätzliche Variable wählen,
+„+ Komponente → Fläche f(x, v)“, fitten, dann Analyse → „Fit als x-Kalibrierung anwenden“.</li>
 <li><b>Vertiefen</b>: Profil-CI, Bootstrap, MCMC, Baseline-Systematik, Varianten vergleichen, Serie/global (Strg+G).</li>
 <li><b>Export</b>: Abbildung (Strg+E), Tabellen, Python-Skript (reproduziert alles aus den Rohdaten).</li>
 </ol>
@@ -186,6 +203,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a.addAction("Daten verrechnen (Quotient, Differenz, x/y-Formeln)…", self.combine_dialog,
                     QtGui.QKeySequence("Ctrl+K"))
         a.addAction("Serie / globaler Fit…", self.series_dialog, QtGui.QKeySequence("Ctrl+G"))
+        a.addAction("Fit als x-Kalibrierung anwenden (z. B. λ(I, T))…", lambda: self.calibration_dialog())
         a.addSeparator()
         a.addAction("Fit als Variante merken", self.remember_variant)
         a.addAction("Modelle vergleichen…", self.compare_variants)
@@ -229,6 +247,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.datasets_panel.importRequested.connect(self.import_data)
         self.datasets_panel.exampleRequested.connect(lambda: self.load_example("raman"))
         self.datasets_panel.combineRequested.connect(self.combine_dialog)
+        self.pipeline_panel.calibrationRequested.connect(lambda: self.calibration_dialog(from_pipeline=True))
         self.pipeline_panel.rangeTargetChanged.connect(self.plot.set_range_target)
         self.model_panel.fitRequested.connect(self.run_fit)
         self.model_panel.autoPeaksRequested.connect(self.auto_peaks)
@@ -284,11 +303,11 @@ class MainWindow(QtWidgets.QMainWindow):
             kw = {"x_label": xl, "y_label": inp.y_label}
             anchors_eff = None
             if out is None:
-                self.plot.set_scene(data=(inp.x, inp.y), **kw)
+                self.plot.set_scene(data=_disp(inp, inp.x, inp.y), **kw)
             elif step.op.startswith("baseline_"):
                 corrected = (out.x, out.y) if step.params.get("subtract", True) else (out.x, out.y - out.aux["baseline"])
-                self.plot.set_scene(data=(inp.x, inp.y), baseline=(out.x, out.aux["baseline"]),
-                                    residuals=(corrected[0], corrected[1], False), **kw)
+                self.plot.set_scene(data=_disp(inp, inp.x, inp.y), baseline=_disp(out, out.x, out.aux["baseline"]),
+                                    residuals=(*_disp(out, *corrected), False), **kw)
                 self.plot.p_res.setLabel("left", "korrigiert")
                 if step.op == "baseline_anchors":
                     try:
@@ -296,12 +315,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     except Exception:  # noqa: BLE001
                         anchors_eff = None
             elif "smoothed" in out.aux and "smoothed" not in inp.aux:
-                self.plot.set_scene(data=(out.x, out.y), smoothed=(out.x, out.aux["smoothed"]), **kw)
+                self.plot.set_scene(data=_disp(out, out.x, out.y), smoothed=_disp(out, out.x, out.aux["smoothed"]),
+                                    **kw)
             elif step.op == "estimate_noise" or step.op == "exclude":
                 excl = out.exclude if out.exclude is not None else np.zeros(out.n, bool)
-                self.plot.set_scene(data=(out.x, out.y), excluded=(out.x[excl], out.y[excl]), **kw)
+                self.plot.set_scene(data=_disp(out, out.x, out.y), excluded=(out.x[excl], out.y[excl]), **kw)
             else:
-                self.plot.set_scene(data=(out.x, out.y), input=(inp.x, inp.y), **kw)
+                self.plot.set_scene(data=_disp(out, out.x, out.y), input=_disp(inp, inp.x, inp.y), **kw)
             self.plot.set_tools(step=step, anchors_eff=anchors_eff)
             return
 
@@ -310,7 +330,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot.p_res.setLabel("left", "Res.")
         mask = s.fit_mask
         excluded = (s.x[~mask], s.y[~mask]) if (~mask).any() else None
-        smoothed = (s.x, s.aux["smoothed"]) if "smoothed" in s.aux else None
+        smoothed = _disp(s, s.x, s.aux["smoothed"]) if "smoothed" in s.aux else None
         fit_xy = comps = resid = preview = None
         current = self.state.fit_current(ds)
         r = ds.fit_result
@@ -321,16 +341,30 @@ class MainWindow(QtWidgets.QMainWindow):
                      if k.startswith("component_dense:")]
             if len(comps) < 2:
                 comps = []
-            resid = (r.x, r.normalized_residuals, r.stats.chi2 is not None)
+            rx, ry = r.x, r.normalized_residuals
+            o = display_order_masked(s, r.mask) if len(r.mask) == s.n else None
+            if o is not None:
+                rx, ry = rx[o], ry[o]
+            resid = (rx, ry, r.stats.chi2 is not None)
         if ds.model.components and (r is None or not current) and s.n > 1:
             try:
                 xd = np.linspace(s.x.min(), s.x.max(), 1500)
                 preview = (xd, ds.model.evaluate(xd, ds.model.initial_values()))
             except Exception:  # noqa: BLE001 - invalid model: no preview
                 preview = None
-        self.plot.set_scene(data=(s.x, s.y), excluded=excluded, smoothed=smoothed, fit=fit_xy,
+        # y(x, v) data such as a calibration surface: one group/curve per value of v
+        fit_model = r._internals.get("model") if r is not None else None
+        var = slice_variable(s, fit_model if fit_model is not None else ds.model)
+        slices = ()
+        if var is not None:
+            slices = slice_curves(s, fit_model, r.values if r is not None else None, var)
+            fit_xy, comps, preview = None, [], None
+            if resid is not None and len(r.mask) == s.n:
+                resid = (*grouped_by_slices(slices, r.mask, r.x, r.normalized_residuals), resid[2])
+        self.plot.set_scene(data=_disp(s, s.x, s.y), excluded=excluded, smoothed=smoothed, fit=fit_xy,
                             fit_stale=not current, components=comps or (), preview=preview, residuals=resid,
-                            x_label=xl, y_label=s.y_label, scatter=s.meta.get("plot_style") == "scatter")
+                            x_label=xl, y_label=s.y_label, scatter=s.meta.get("plot_style") == "scatter",
+                            slices=slices)
         handles = []
         vals = self._values_for_handles(ds)
         if vals is not None and ds.model.peaks:
@@ -671,6 +705,41 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.information(self, "Verrechnen", "Zuerst Daten importieren.")
             return
         CombineDialog(self.state, self).exec()
+
+    def calibration_dialog(self, from_pipeline=False):
+        st = self.state
+        cur = st.current()
+        sources = [d for d in st.project.datasets if d.fit_result is not None and st.fit_current(d)]
+        if from_pipeline:
+            sources = [d for d in sources if cur is None or d.id != cur.id]
+        if not sources:
+            QtWidgets.QMessageBox.information(
+                self, "Kalibrierung",
+                "Kein Kalibrier-Fit vorhanden: Kalibrierdaten (z. B. λ über I, Spalte T als zusätzliche Variable) "
+                "auswählen, Modell → Fläche f(x, v) → Ebene, fitten – dann diesen Dialog öffnen.")
+            return
+        if len(st.project.datasets) < 2:
+            QtWidgets.QMessageBox.information(self, "Kalibrierung", "Keine Zieldatensätze – Messdaten importieren.")
+            return
+        source = next((d for d in sources if cur is not None and d.id == cur.id), sources[0])
+        try:
+            dlg = CalibrationDialog(st, sources, source=source, target=cur if from_pipeline else None, parent=self)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(self, "Kalibrierung", str(e))
+            return
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+        self.apply_calibration(dlg.params, dlg.targets)
+
+    def apply_calibration(self, params, target_ids):
+        self.state.undo.beginMacro("x-Kalibrierung anwenden")
+        try:
+            for tid in target_ids:
+                t = self.state.project.get(tid)
+                self.state.edit("pipeline", lambda p: p.add("calibrate_x", params), "x kalibrieren", ds=t)
+        finally:
+            self.state.undo.endMacro()
+        self.schedule_refresh()
 
     def series_dialog(self):
         if len(self.state.project.datasets) < 2:

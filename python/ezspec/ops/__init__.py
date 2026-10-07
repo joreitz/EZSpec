@@ -8,6 +8,8 @@
 from .registry import OpCall, OpSpec, ParamSpec, apply_op, get_op, list_ops, pop_warnings, warn
 from .basic import (convert_x, crop, despike, estimate_noise, exclude, normalize, offset_scale,
                     resample, set_sigma, set_units, smooth_moving_average, smooth_savgol, smooth_whittaker)
+from .sweep_ops import average_sweeps, select_sweeps
+from .calibrate import calibrate_x
 from .baseline import (baseline_anchors, baseline_arpls, baseline_asls, baseline_polynomial,
                        baseline_rubberband, baseline_snip, whittaker_cutoff_points)
 
@@ -16,5 +18,6 @@ __all__ = [
     "convert_x", "crop", "despike", "estimate_noise", "exclude", "normalize", "offset_scale",
     "resample", "set_sigma", "set_units", "smooth_moving_average", "smooth_savgol", "smooth_whittaker",
     "baseline_anchors", "baseline_arpls", "baseline_asls", "baseline_polynomial",
-    "baseline_rubberband", "baseline_snip", "whittaker_cutoff_points",
+    "baseline_rubberband", "baseline_snip", "whittaker_cutoff_points", "average_sweeps", "select_sweeps",
+    "calibrate_x",
 ]

@@ -27,6 +27,10 @@ from .ops.registry import OpCall, get_op, pop_warnings
 from .spectrum import Spectrum
 
 
+# operations that combine points that are neighbours in x
+_NEIGHBOUR_CATEGORIES = ("Glätten", "Baseline", "Korrektur")
+
+
 def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
@@ -230,6 +234,11 @@ class Pipeline:
             return StepResult(step, s, None, warnings, error=f"{type(exc).__name__}: {exc}",
                               seconds=time.perf_counter() - t0)
         out, w = pop_warnings(out)
+        if spec.category in _NEIGHBOUR_CATEGORIES or step.op == "resample":
+            from .sweeps import is_multivalued
+            if is_multivalued(s):
+                w.append("Daten enthalten mehrere Durchläufe (hin/zurück): dieser Schritt verknüpft Nachbarpunkte "
+                         "in x und mischt dabei die Rampen – vorher 'Durchläufe auswählen' oder 'mitteln'.")
         self._cache[key] = (out, w)
         if len(self._cache) > self.CACHE_SIZE:
             self._cache.popitem(last=False)

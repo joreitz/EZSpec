@@ -84,6 +84,7 @@ class DatasetsPanel(QtWidgets.QWidget):
 
 class PipelinePanel(QtWidgets.QWidget):
     rangeTargetChanged = QtCore.Signal(str)
+    calibrationRequested = QtCore.Signal()
 
     def __init__(self, state, parent=None):
         super().__init__(parent)
@@ -147,6 +148,11 @@ class PipelinePanel(QtWidgets.QWidget):
                 continue
             sub = menu.addMenu(cat)
             for spec in cats[cat]:
+                if spec.name == "calibrate_x":     # needs a calibration from a fit: dedicated dialog
+                    a = sub.addAction(spec.title + "…")
+                    a.setToolTip(spec.description)
+                    a.triggered.connect(self.calibrationRequested.emit)
+                    continue
                 a = sub.addAction(spec.title)
                 a.setToolTip(spec.description)
                 a.triggered.connect(lambda _=False, n=spec.name: self.add_step(n))

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..fit import METHODS
 from ..fit.result import fmt_value
-from ..models import COMPONENT_TYPES, TEMPLATES, Formula, FormulaError, add_template
+from ..models import COMPONENT_TYPES, SURFACES, TEMPLATES, Formula, FormulaError, add_surface, add_template
+from ..models.library import surface_expression
 from .param_form import fmt_num, parse_num
 from .theme import SEVERITY_COLOR
 
@@ -197,9 +199,59 @@ class ModelPanel(QtWidgets.QWidget):
                 a = sub.addAction(f"{t.name}:  {t.expression}")
                 a.setToolTip(t.description)
                 a.triggered.connect(lambda _=False, n=t.name: self.add_template(n))
+        self.surface_menu = m.addMenu("Fläche f(x, v) – Kalibrierung")
+        self.surface_menu.setToolTipsVisible(True)
+        self.surface_menu.aboutToShow.connect(self._fill_surface_menu)
         m.addSeparator()
         m.addAction("Eigene Formel…").triggered.connect(self.add_formula)
         return m
+
+    def _extra_variables(self):
+        ds = self._ds()
+        if ds is None:
+            return []
+        s = self.state.run(ds).final
+        return [k[4:] for k in s.aux if k.startswith("var:")]
+
+    def _fill_surface_menu(self):
+        menu = self.surface_menu
+        menu.clear()
+        names = self._extra_variables()
+        if not names:
+            a = menu.addAction("keine weitere Variable – beim Import Spalte unter 'zusätzl. Variablen' wählen")
+            a.setEnabled(False)
+            return
+        for v in names:
+            sub = menu.addMenu(f"y(x, {v})") if len(names) > 1 else menu
+            x0, v0, _ = self._surface_centre(v)
+            for kind, title in SURFACES.items():
+                a = sub.addAction(f"{title.split(':')[0]}:  {surface_expression(kind, v, x0, v0)}")
+                a.setToolTip(f"Polynomfläche in x und {v}, zentriert in der Datenmitte; danach fitten und "
+                             "'Analyse → Fit als x-Kalibrierung anwenden'")
+                a.triggered.connect(lambda _=False, k=kind, v=v: self.add_surface(k, v))
+
+    def _surface_centre(self, var):
+        s = self.state.run(self._ds()).final
+        if not s.n:
+            return 0.0, 0.0, 0.0
+        return float(np.median(s.x)), float(np.median(s.aux[f"var:{var}"])), float(np.median(s.y))
+
+    def add_surface(self, kind, var):
+        x0, v0, y0 = self._surface_centre(var)
+
+        def mut(m):
+            names = set(m.param_names())
+            prefix = ""
+            if names & {"c0", "cx", f"c{var}"}:
+                i = 2
+                while any(n.startswith(f"f{i}_") for n in names):
+                    i += 1
+                prefix = f"f{i}_"
+            add_surface(m, kind, var, x0, v0, y0, prefix=prefix)
+        try:
+            self.state.edit("model", mut, f"Fläche: {SURFACES[kind].split(':')[0]}")
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(self, "Modell", str(e))
 
     def _ds(self):
         return self.state.current()
