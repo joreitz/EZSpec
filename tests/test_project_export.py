@@ -117,3 +117,36 @@ def test_generated_script_reproduces_fit_bit_identically(raw_file, tmp_path):
 def test_new_spec_presets():
     s = new_spec("nature_2")
     assert s["width_mm"] == 183 and s["font_size"] == 7
+
+
+def test_stage_figures_raw_and_step(raw_file, tmp_path):
+    from ezspec.export.figure import dataset_curves, dataset_stages, stage_spec
+    ds = build_dataset(raw_file)
+    run = ds.run_pipeline()
+    stages = dataset_stages(ds.raw, run)
+    assert [st["id"] for st in stages[:2]] == ["result", "raw"] and len(stages) == 2 + len(ds.pipeline)
+    curves = dataset_curves(ds.raw, run, ds.fit_result)
+    np.testing.assert_array_equal(curves["raw:data"][1], ds.raw.y)
+    base = next(st for st in stages if st["op"] == "baseline_polynomial")
+    b = run.result(base["id"])
+    np.testing.assert_array_equal(curves[f"step:{base['id']}:baseline"][1], b.output.aux["baseline"])
+    np.testing.assert_array_equal(curves[f"step:{base['id']}:corrected"][1], b.output.y)
+    np.testing.assert_array_equal(curves[f"step:{base['id']}:input:data"][1], b.input.y)
+    raw_spec = stage_spec(ds.id, curves, stages[1])
+    base_spec = stage_spec(ds.id, curves, base)
+    assert raw_spec["content"] == "raw" and len(raw_spec["panels"]) == 1
+    assert len(base_spec["panels"]) == 2 and base_spec["panels"][1]["zero_line"]
+    resolve = make_resolver({ds.id: curves})
+    for spec in (raw_spec, base_spec, stage_spec(ds.id, curves, stages[0])):
+        render_figure(spec, resolve)
+    # the exported script reproduces the stage figures byte for byte
+    code = generate_script(ds, raw_path=str(raw_file), figure_spec=stage_spec(ds.id, curves, stages[0]),
+                           out_stem=str(tmp_path / "out"), extra_figures={"raw": raw_spec, "step2": base_spec})
+    script = tmp_path / "analysis.py"
+    script.write_text(code)
+    res = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, cwd=tmp_path, timeout=300)
+    assert res.returncode == 0, res.stderr
+    for suffix, spec in (("_raw", raw_spec), ("_step2", base_spec)):
+        save_figure(spec, resolve, tmp_path / f"ref{suffix}.svg")
+        assert (tmp_path / f"out{suffix}.svg").read_bytes() == (tmp_path / f"ref{suffix}.svg").read_bytes()
+    assert (tmp_path / "out.pdf").exists() and (tmp_path / "out_raw.pdf").exists()

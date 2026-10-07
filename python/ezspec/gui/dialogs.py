@@ -10,8 +10,9 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtGui import QUndoCommand, QUndoStack
 
 from .. import units as U
-from ..export.figure import (PRESET_NOTE, PRESETS, curves_for, default_spec, get_path, make_resolver,
-                             param_box_lines, render_figure, save_figure, set_path)
+from ..export.figure import (PRESET_NOTE, PRESETS, curve_title, dataset_curves, dataset_stages, get_path,
+                             make_resolver, new_trace, param_box_lines, render_figure, save_figure, set_path,
+                             stage_spec)
 from ..fit import compare
 from ..fit.compare import ComparisonError
 from ..io import read_spectra, sniff
@@ -177,17 +178,24 @@ class FigureDialog(QtWidgets.QDialog):
     LEGEND = [None, "best", "upper right", "upper left", "lower left", "lower right", "center right",
               "upper center", "lower center"]
 
-    def __init__(self, ds, spec=None, parent=None):
+    STYLES = ["line", "scatter", "step", "fill"]
+
+    def __init__(self, ds, spec=None, parent=None, stage="result"):
         super().__init__(parent)
-        self.setWindowTitle(f"Figure – {ds.name}")
         self.ds = ds
         run = ds.run_pipeline()
         self.processed = run.final
         res = ds.fit_result
-        self.curves = {ds.id: curves_for(self.processed, ds.raw, res, ds.model if res is not None else None)}
-        xl = U.AXIS_LABELS.get(self.processed.x_unit, self.processed.x_label)
-        self.spec = copy.deepcopy(spec) if spec else default_spec(ds.id, self.curves[ds.id], xl,
-                                                                  self.processed.y_label or "Intensity")
+        self.stages = dataset_stages(ds.raw, run)
+        self.curves = {ds.id: dataset_curves(ds.raw, run, res, ds.model if res is not None else None)}
+        if spec:
+            self.spec = copy.deepcopy(spec)
+            self.spec.setdefault("content", "result")
+        else:
+            if stage not in {st["id"] for st in self.stages}:
+                stage = "result"
+            self.spec = stage_spec(ds.id, self.curves[ds.id], self._info(stage))
+            self.spec["content"] = stage
         self.undo = QUndoStack(self)
         self._timer = QtCore.QTimer(self, singleShot=True, interval=120)
         self._timer.timeout.connect(self._render)
@@ -197,6 +205,15 @@ class FigureDialog(QtWidgets.QDialog):
         left = QtWidgets.QWidget()
         left.setMaximumWidth(380)
         lv = QtWidgets.QVBoxLayout(left)
+        content = QtWidgets.QFormLayout()
+        self.stage_combo = QtWidgets.QComboBox()
+        for st in self.stages:
+            self.stage_combo.addItem(st["title"], st["id"])
+        self.stage_combo.setCurrentIndex(max(self.stage_combo.findData(self.stage), 0))
+        self.stage_combo.setToolTip("What the figure shows: the final result, the raw data or the input/output of "
+                                    "a single processing step. Changing it replaces the panels.")
+        content.addRow("Content", self.stage_combo)
+        lv.addLayout(content)
         form = QtWidgets.QFormLayout()
         self.preset = QtWidgets.QComboBox()
         self.preset.addItem("(custom)", "custom")
@@ -256,14 +273,29 @@ class FigureDialog(QtWidgets.QDialog):
         secrow.addWidget(self.laser)
         pf.addRow("Secondary x axis", secrow)
         lv.addLayout(pf)
-        self.traces = QtWidgets.QTableWidget(0, 4)
-        self.traces.setHorizontalHeaderLabels(["on", "Curve", "Legend", "Color"])
+        self.traces = QtWidgets.QTableWidget(0, 5)
+        self.traces.setHorizontalHeaderLabels(["on", "Curve", "Legend", "Color", "Style"])
         self.traces.verticalHeader().setVisible(False)
         self.traces.horizontalHeader().setStretchLastSection(True)
         self.traces.setColumnWidth(0, 28)
         self.traces.cellChanged.connect(self._trace_edited)
         self.traces.cellDoubleClicked.connect(self._pick_color)
         lv.addWidget(self.traces, 1)
+        trow = QtWidgets.QHBoxLayout()
+        self.add_curve = QtWidgets.QToolButton()
+        self.add_curve.setText("+ Curve")
+        self.add_curve.setToolTip("Add any available curve (raw data, step input/output, baseline, fit, …) "
+                                  "to the selected panel")
+        self.add_curve.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.add_curve.setMenu(self._curve_menu())
+        rem = QtWidgets.QToolButton()
+        rem.setText("− Curve")
+        rem.setToolTip("Remove the selected curve from the panel")
+        rem.clicked.connect(self._remove_curve)
+        trow.addWidget(self.add_curve)
+        trow.addWidget(rem)
+        trow.addStretch(1)
+        lv.addLayout(trow)
         self.params = QtWidgets.QListWidget()
         self.params.setMaximumHeight(100)
         self.params.setToolTip("Parameters shown in the text box of the main panel")
@@ -326,7 +358,69 @@ class FigureDialog(QtWidgets.QDialog):
     def _panel(self):
         return max(self.panel_sel.currentIndex(), 0)
 
+    @property
+    def stage(self) -> str:
+        """Stage shown by the figure (stored in the spec, so it is undoable and saved with it)."""
+        return self.spec.get("content", "result")
+
+    def _info(self, sid):
+        return next((st for st in self.stages if st["id"] == sid), self.stages[0])
+
+    def _stage_info(self):
+        return self._info(self.stage)
+
+    def _set_stage(self):
+        sid = self.stage_combo.currentData()
+        if self._loading or sid == self.stage:
+            return
+        info = self._info(sid)
+        new = stage_spec(self.ds.id, self.curves[self.ds.id], info, self.spec.get("preset", "elsevier_1"))
+        self.undo.beginMacro(f"Content: {info['title']}")
+        self._set("content", sid)
+        self._set("panels", new["panels"])
+        self.undo.endMacro()
+
+    def _curve_menu(self):
+        menu = QtWidgets.QMenu(self)
+        groups = {}
+        for key in self.curves[self.ds.id]:
+            if key.startswith("step:"):
+                sid = key.split(":", 2)[1]
+                title = next((st["title"] for st in self.stages if st["id"] == sid), sid)
+            elif key.startswith("raw:") or key == "raw":
+                title = "Raw data"
+            else:
+                title = "Result"
+            groups.setdefault(title, []).append(key)
+        for title, keys in groups.items():
+            sub = menu.addMenu(title)
+            for key in keys:
+                a = sub.addAction(curve_title(key, self.stages))
+                a.triggered.connect(lambda _=False, k=key: self._add_curve(k))
+        return menu
+
+    def _add_curve(self, key):
+        x, _y, _e = self.curves[self.ds.id][key]
+        kind = "scatter" if len(x) <= 400 or "slice_data" in key or key.endswith("excluded") else "line"
+        traces = copy.deepcopy(self.spec["panels"][self._panel()]["traces"])
+        label = curve_title(key, self.stages).split(" – ")[-1]
+        traces.append(new_trace(self.ds.id, key, kind, label=label))
+        self._set(f"panels.{self._panel()}.traces", traces)
+
+    def _remove_curve(self):
+        row = self.traces.currentRow()
+        traces = copy.deepcopy(self.spec["panels"][self._panel()]["traces"])
+        if 0 <= row < len(traces):
+            del traces[row]
+            self._set(f"panels.{self._panel()}.traces", traces)
+
+    def _style_changed(self, row, kind):
+        if self._loading:
+            return
+        self._set(f"panels.{self._panel()}.traces.{row}.kind", kind)
+
     def _connect(self):
+        self.stage_combo.currentIndexChanged.connect(lambda _i: self._set_stage())
         self.preset.currentIndexChanged.connect(self._apply_preset)
         self.width.valueEdited.connect(lambda v: self._set("width_mm", v))
         self.height.valueEdited.connect(lambda v: self._set("height_mm", v))
@@ -360,7 +454,7 @@ class FigureDialog(QtWidgets.QDialog):
 
     def _secondary_changed(self):
         unit = self.sec.currentData()
-        src = self.processed.x_unit
+        src = self._stage_info()["spectrum"].x_unit
         val = None
         if unit and src in U.UNITS and unit != src:
             val = {"from": src, "to": unit, "laser_nm": self.laser.value()}
@@ -408,10 +502,12 @@ class FigureDialog(QtWidgets.QDialog):
             self.family.setCurrentText(s.get("font_family", "sans-serif"))
             self.lw.setValue(s.get("line_width", 1.0))
             self.panel_labels.setChecked(bool(s.get("panel_labels")))
+            self.stage_combo.setCurrentIndex(max(self.stage_combo.findData(self.stage), 0))
+            self.setWindowTitle(f"Figure – {self.ds.name} – {self._stage_info()['title']}")
             idx = self._panel()
             self.panel_sel.clear()
             for i, p in enumerate(s["panels"]):
-                self.panel_sel.addItem(f"Panel {i + 1}" + (" (main)" if i == 0 else " (residuals)" if i == 1 else ""))
+                self.panel_sel.addItem(f"Panel {i + 1}" + (" (main)" if i == 0 else ""))
             self.panel_sel.setCurrentIndex(min(idx, len(s["panels"]) - 1))
         finally:
             self._loading = False
@@ -437,7 +533,8 @@ class FigureDialog(QtWidgets.QDialog):
                 on.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
                 on.setCheckState(QtCore.Qt.Checked if t.get("visible", True) else QtCore.Qt.Unchecked)
                 self.traces.setItem(i, 0, on)
-                name = QtWidgets.QTableWidgetItem(t["curve"])
+                name = QtWidgets.QTableWidgetItem(curve_title(t["curve"], self.stages))
+                name.setToolTip(t["curve"])
                 name.setFlags(name.flags() & ~QtCore.Qt.ItemIsEditable)
                 self.traces.setItem(i, 1, name)
                 self.traces.setItem(i, 2, QtWidgets.QTableWidgetItem(t.get("label", "")))
@@ -449,6 +546,11 @@ class FigureDialog(QtWidgets.QDialog):
                     col.setForeground(QtGui.QColor("white" if qc.lightness() < 128 else "black"))
                 col.setToolTip("Double-click: choose color")
                 self.traces.setItem(i, 3, col)
+                style = QtWidgets.QComboBox()
+                style.addItems(self.STYLES)
+                style.setCurrentText(t.get("kind", "line"))
+                style.currentTextChanged.connect(lambda k, r=i: self._style_changed(r, k))
+                self.traces.setCellWidget(i, 4, style)
         finally:
             self._loading = False
 
@@ -471,7 +573,8 @@ class FigureDialog(QtWidgets.QDialog):
 
     def _export(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export figure", f"{self.ds.name}.pdf",
+            self, "Export figure",
+            f"{self.ds.name}{'' if self.stage == 'result' else '_' + re_safe(self._stage_info()['title'])}.pdf",
             "PDF (*.pdf);;SVG (*.svg);;PNG (*.png);;PGF/LaTeX (*.pgf);;EPS (*.eps)")
         if not path:
             return

@@ -397,3 +397,34 @@ def test_calibration_surface_slices_and_dialog(app, win):
     w.state.undo.undo()
     pump(app)
     assert not meas.pipeline.steps or meas.pipeline.steps[-1].op != "calibrate_x"
+
+
+def test_figure_of_raw_data_and_single_step(app, win, tmp_path):
+    w = win
+    ds = w.state.current()
+    w.pipeline_panel.add_step("baseline_arpls")
+    pump(app)
+    sid = w.state.selected_step
+    dlg = FigureDialog(ds, None, w, stage=sid)              # what the plot shows for the selected step
+    assert dlg.stage == sid and len(dlg.spec["panels"]) == 2
+    curves = [t["curve"] for t in dlg.spec["panels"][0]["traces"]]
+    assert f"step:{sid}:baseline" in curves
+    dlg.stage_combo.setCurrentIndex(dlg.stage_combo.findData("raw"))
+    assert dlg.stage == "raw" and [t["curve"] for t in dlg.spec["panels"][0]["traces"]] == ["raw:data"]
+    dlg._add_curve(f"step:{sid}:baseline")
+    assert dlg.spec["panels"][0]["traces"][-1]["curve"] == f"step:{sid}:baseline"
+    dlg.traces.cellWidget(0, 4).setCurrentText("scatter")
+    assert dlg.spec["panels"][0]["traces"][0]["kind"] == "scatter"
+    dlg.traces.setCurrentCell(1, 1)
+    dlg._remove_curve()
+    assert len(dlg.spec["panels"][0]["traces"]) == 1
+    for _ in range(4):                                     # remove, style, add, content
+        dlg.undo.undo()
+    assert dlg.stage == sid and dlg.stage_combo.currentData() == sid      # content change is undoable
+    out = tmp_path / "step.pdf"
+    from ezspec.export.figure import make_resolver, save_figure
+    save_figure(dlg.spec, make_resolver(dlg.curves), out)
+    assert out.stat().st_size > 1000
+    dlg.accept()
+    w.state.project.figures[w._figure_key(ds, dlg.stage)] = dlg.spec
+    assert f"{ds.id}__{sid}" in w.state.project.figures

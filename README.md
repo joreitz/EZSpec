@@ -79,6 +79,14 @@ Without the compiled core everything runs on the NumPy/SciPy reference implement
    monotonic in the data range is refused.
 8. **Export**: *File → Export*: figure (editor with journal templates), result tables
    (CSV/JSON/report), Python script. *Analysis → Series / global fit* (Ctrl+G).
+   Publication figures are not limited to the final result: *Figure…* in the plot toolbar (or Ctrl+E)
+   exports what the plot currently shows. With a processing step selected, that is the step's input and
+   output, e.g. data with the baseline and the corrected spectrum below it. *File → Export → Figure of
+   the raw data* exports the unprocessed data. In the figure editor, *Content* switches between the
+   result, the raw data and every step; *+ Curve* adds any curve of any stage (e.g. raw data under the
+   processed data), and *Style* sets line, points, steps or filled area per curve. Each figure is stored
+   in the project, and the exported Python script re-creates all of them from the raw data
+   (`<name>_raw.pdf`, `<name>_step2.pdf`, …).
 
 ## Scripting API
 
@@ -112,7 +120,8 @@ Further entry points: `ezspec.Pipeline` (steps, serialization, caching),
 `ezspec.models.add_surface`, `ezspec.calibration.calibration_from_fit` and `ops.calibrate_x`
 (calibration surfaces, x calibration),
 `ezspec.project.Project`,
-`ezspec.export.figure` and `ezspec.export.script.generate_script`.
+`ezspec.export.figure` (incl. `dataset_curves`/`stage_spec` for figures of the raw data and of single steps)
+and `ezspec.export.script.generate_script`.
 
 Example: x calibration with a plane λ(I, T):
 
