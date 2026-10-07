@@ -41,6 +41,9 @@ def whittaker_cutoff_points(lam: float, diff_order: int = 2) -> float:
 
 
 def _finish(s: Spectrum, b: np.ndarray, subtract: bool, recipe: dict) -> Spectrum:
+    unit = {"nm": "nm", "cm-1": "cm⁻¹", "raman": "cm⁻¹", "eV": "eV"}.get(s.x_unit, s.x_unit or "")
+    recipe = dict(recipe, subtracted=bool(subtract), x_unit=unit, n_points=int(s.n),
+                  x_range=[float(np.min(s.x)), float(np.max(s.x))] if s.n else None)
     aux = dict(s.aux)
     aux["baseline"] = b
     total = aux.get("baseline_total", np.zeros(s.n))
@@ -131,8 +134,10 @@ def baseline_anchors(s: Spectrum, anchors, interpolation, window, extrapolation,
                 d = ak.derivative()
                 b[lo] = ya[0] + d(xa[0]) * (xq[lo] - xa[0])
                 b[hi] = ya[-1] + d(xa[-1]) * (xq[hi] - xa[-1])
-    recipe = {"method": "anchors", "anchors": [[float(a), float(c)] for a, c in zip(xa, ya)],
-              "interpolation": interpolation}
+    recipe = {"method": "anchors", "title": "Baseline: anchor points",
+              "anchors": [[float(a), float(c)] for a, c in zip(xa, ya)], "interpolation": interpolation,
+              "window": int(window), "extrapolation": extrapolation,
+              "manual": [a[1] is not None for a in sorted(anchors, key=lambda a: a[0])]}
     out = _finish(s, np.asarray(b), subtract, recipe)
     if xa[0] > s.x[0] or xa[-1] < s.x[-1]:
         out = warn(out, f"Baseline extrapolated beyond the anchors ({extrapolation}) – "
@@ -197,8 +202,33 @@ def baseline_polynomial(s: Spectrum, order, method, ranges, subtract) -> Spectru
         if w.sum() < order + 1:
             raise ValueError(f"need at least {order + 1} points in the baseline ranges")
     b, n_iter = polynomial_baseline(s.x, s.y, order, w, method)
-    return _finish(s, b, subtract, {"method": "polynomial", "order": order, "variant": method,
-                                    "iterations": n_iter})
+    return _finish(s, b, subtract, {"method": "polynomial", "title": "Baseline: polynomial", "order": order,
+                                    "variant": method, "iterations": n_iter, "ranges": [list(r) for r in ranges],
+                                    **_poly_coefficients(s.x, s.y, b, order, w, method)})
+
+
+def _poly_coefficients(x, y, b, order, w, method) -> dict:
+    """Coefficients of the baseline polynomial in t = (2x − (lo + hi))/(hi − lo) ∈ [−1, 1]
+    and – for the plain least-squares fit – their standard errors from the
+    residual scatter in the baseline ranges, s² (VᵀWV)⁻¹."""
+    V = _vander(x, order)
+    coef = np.linalg.lstsq(V, b, rcond=None)[0]
+    out = {"domain": [float(x.min()), float(x.max())], "coefficients": [float(c) for c in coef],
+           "coefficient_stderr": None}
+    if method == "fit":
+        ww = np.ones(len(x)) if w is None else np.asarray(w, float)
+        n_used = int(np.count_nonzero(ww))
+        dof = n_used - (order + 1)
+        if dof > 0:
+            r = (y - b) * np.sqrt(ww)
+            s2 = float(r @ r) / dof
+            try:
+                cov = s2 * np.linalg.inv((V * ww[:, None]).T @ V)
+                out["coefficient_stderr"] = [float(v) for v in np.sqrt(np.clip(np.diag(cov), 0, None))]
+                out["covariance"] = cov.tolist()
+            except np.linalg.LinAlgError:
+                pass
+    return out
 
 
 # ============================================================================ Whittaker
@@ -210,10 +240,14 @@ _WH_PARAMS = [P("diff_order", "int", 2, "Difference order", min=1, max=3),
               _SUBTRACT]
 
 
-def _whittaker_finish(s, res, subtract, recipe, lam, d):
+def _whittaker_finish(s, res, subtract, recipe, lam, d, tol, max_iter, exclude_ranges, force_ranges):
     b, w, hist, converged = res
-    recipe.update(iterations=int(len(hist)), converged=bool(converged),
-                  cutoff_points=whittaker_cutoff_points(lam, d))
+    cut = whittaker_cutoff_points(lam, d)
+    dx = float(np.median(np.abs(np.diff(s.x)))) if s.n > 1 else float("nan")
+    recipe.update(iterations=int(len(hist)), converged=bool(converged), cutoff_points=cut,
+                  cutoff_x=cut * dx if np.isfinite(dx) else None, diff_order=int(d), tol=float(tol),
+                  max_iter=int(max_iter), exclude_ranges=[list(r) for r in exclude_ranges],
+                  force_ranges=[list(r) for r in force_ranges])
     out = _finish(s, np.asarray(b), subtract, recipe)
     aux = dict(out.aux)
     aux["baseline_weights"] = np.asarray(w)
@@ -232,7 +266,9 @@ def baseline_asls(s: Spectrum, lam, p, diff_order, max_iter, tol, exclude_ranges
     fixed = _fixed_weights(s.x, exclude_ranges, force_ranges)
     res = core().asls(as_f64(s.y), lam, p, diff_order, max_iter, tol, None,
                       None if fixed is None else as_f64(fixed))
-    return _whittaker_finish(s, res, subtract, {"method": "asls", "lam": lam, "p": p}, lam, diff_order)
+    return _whittaker_finish(s, res, subtract, {"method": "asls", "title": "Baseline: AsLS (Whittaker)",
+                                                "lam": float(lam), "p": float(p)},
+                             lam, diff_order, tol, max_iter, exclude_ranges, force_ranges)
 
 
 @operation("baseline_arpls", 1, "Baseline: arPLS (Whittaker)", "Baseline",
@@ -243,7 +279,9 @@ def baseline_arpls(s: Spectrum, lam, diff_order, max_iter, tol, exclude_ranges, 
     fixed = _fixed_weights(s.x, exclude_ranges, force_ranges)
     res = core().arpls(as_f64(s.y), lam, diff_order, max_iter, tol, None,
                        None if fixed is None else as_f64(fixed))
-    return _whittaker_finish(s, res, subtract, {"method": "arpls", "lam": lam}, lam, diff_order)
+    return _whittaker_finish(s, res, subtract, {"method": "arpls", "title": "Baseline: arPLS (Whittaker)",
+                                                "lam": float(lam)},
+                             lam, diff_order, tol, max_iter, exclude_ranges, force_ranges)
 
 
 # ============================================================================ SNIP / rubberband
@@ -271,8 +309,11 @@ def baseline_snip(s: Spectrum, max_half_window, decreasing, filter_order, lls, s
         b = _lls_inv(core().snip(as_f64(_lls(y)), max_half_window, decreasing, filter_order))
     else:
         b = core().snip(y, max_half_window, decreasing, filter_order)
+    dx = float(np.median(np.abs(np.diff(s.x)))) if s.n > 1 else None
     return _finish(s, np.asarray(b), subtract,
-                   {"method": "snip", "max_half_window": max_half_window, "filter_order": filter_order})
+                   {"method": "snip", "title": "Baseline: SNIP", "max_half_window": int(max_half_window),
+                    "half_window_x": None if dx is None else max_half_window * dx,
+                    "filter_order": int(filter_order), "decreasing": bool(decreasing), "lls": bool(lls)})
 
 
 @operation("baseline_rubberband", 1, "Baseline: rubberband", "Baseline",
@@ -282,4 +323,4 @@ def baseline_rubberband(s: Spectrum, subtract) -> Spectrum:
     if not s.is_strictly_increasing:
         raise ValueError("rubberband needs strictly increasing x")
     b = core().rubberband(as_f64(s.x), as_f64(s.y))
-    return _finish(s, np.asarray(b), subtract, {"method": "rubberband"})
+    return _finish(s, np.asarray(b), subtract, {"method": "rubberband", "title": "Baseline: rubberband (lower convex hull)"})

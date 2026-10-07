@@ -17,6 +17,7 @@ implicit:
 
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import time
 from dataclasses import asdict, dataclass
@@ -587,6 +588,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         "numpy": np.__version__, "backend": backend_name(),
         "model_description": model.describe(), "seconds": time.perf_counter() - t_start,
         "spectrum_flags": sorted(spectrum.flags), "gauss_newton_steps": refined_steps,
+        "baselines": copy.deepcopy(list(spectrum.meta.get("baselines", []))),
     }
     result = FitResult(
         success=bool(res.success), message=str(res.message), method=method_used, nfev=int(res.nfev),
@@ -595,6 +597,8 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         residuals=r, normalized_residuals=zdiag, components=model.evaluate_components(x, best, variables),
         mask=mask, model_spec=model.to_dict(), options=opt.to_dict(),
         data_hash=_data_hash(x, y, full_sigma, weighting), provenance=provenance,
+        baseline=(np.asarray(spectrum.aux["baseline_total"], float)[mask]
+                  if "baseline_total" in spectrum.aux else None),
     )
     result._internals = {"minimizer": mini, "lmfit_result": res, "best_params": best, "model": model.copy(),
                          "x": x, "y": y,

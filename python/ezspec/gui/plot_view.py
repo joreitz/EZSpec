@@ -70,6 +70,7 @@ class PlotView(QtWidgets.QWidget):
     peakDragged = QtCore.Signal(str, str, float, float, bool)   # prefix, handle (top|width), x, y, final
     cursorMoved = QtCore.Signal(float, float)
     modeChanged = QtCore.Signal(str)
+    figureRequested = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -119,6 +120,9 @@ class PlotView(QtWidgets.QWidget):
         self.act_points.setToolTip("Draw data as points instead of a line")
         self.act_points.toggled.connect(lambda _on: self._apply_data_style())
         self.toolbar.addAction(self.act_points)
+        self.toolbar.addSeparator()
+        act_fig = self.toolbar.addAction("Figure…", self.figureRequested.emit)
+        act_fig.setToolTip("Publication-quality figure of this view (result, raw data or the selected step)")
         self._scatter = False
         self.hint = QtWidgets.QLabel()
         self.hint.setObjectName("hint")

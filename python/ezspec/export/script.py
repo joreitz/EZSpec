@@ -31,8 +31,13 @@ def _reader_call(raw) -> str:
     return "read_file(RAW)"
 
 
-def generate_script(dataset, raw_path=None, figure_spec: dict | None = None, out_stem: str | None = None) -> str:
-    """Python source reproducing ``dataset`` (pipeline + model fit + figure)."""
+def generate_script(dataset, raw_path=None, figure_spec: dict | None = None, out_stem: str | None = None,
+                    extra_figures: dict | None = None) -> str:
+    """Python source reproducing ``dataset`` (pipeline + model fit + figures).
+
+    ``figure_spec`` is the main figure (written as ``<out_stem>.pdf/.svg``);
+    ``extra_figures`` maps a file suffix to further figures, e.g. of the raw
+    data or of a single processing step (``<out_stem>_<suffix>.pdf/.svg``)."""
     raw = dataset.raw
     src = raw.meta.get("source", {})
     if raw_path is None:
@@ -91,19 +96,43 @@ def generate_script(dataset, raw_path=None, figure_spec: dict | None = None, out
             "print(result.report())",
             'OUT.with_name(OUT.name + "_fit.json").write_text(result.to_json(), encoding="utf-8")',
         ]
+    figures = {}
     if figure_spec is not None:
+        figures[""] = figure_spec
+    figures.update(extra_figures or {})
+    if figures:
+        # figures of intermediate stages (raw data, single steps) need every step's input and output
+        stages = any(str(t.get("curve", "")).startswith(("raw:", "step:"))
+                     for f in figures.values() for p in f.get("panels", []) for t in p.get("traces", []))
+        fit_args = f"{'result' if has_model else 'None'}, {'model' if has_model else 'None'}"
         out += [
             "",
-            "# --- Figure " + "-" * 55,
-            "from ezspec.export.figure import curves_for, make_resolver, save_figure",
+            "# --- Figures " + "-" * 54,
+        ]
+        if stages:
+            out += [
+                "from ezspec.export.figure import dataset_curves, make_resolver, save_figure",
+                "from ezspec.pipeline import Pipeline",
+                "",
+                "# figures of intermediate stages: re-run the same pipeline, keeping the output of every step",
+                "run = Pipeline.from_dict(json.loads(r'''",
+                json.dumps(dataset.pipeline.to_dict(), indent=1, ensure_ascii=False),
+                "''')).run(raw)",
+            ]
+        else:
+            out += ["from ezspec.export.figure import curves_for, make_resolver, save_figure"]
+        out += [
             "",
-            "spec = json.loads(r'''",
-            json.dumps(figure_spec, indent=1, ensure_ascii=False),
+            "# file suffix -> figure specification ('' = main figure)",
+            "figures = json.loads(r'''",
+            json.dumps(figures, indent=1, ensure_ascii=False),
             "''')",
-            f"curves = {{{dataset.id!r}: curves_for(s, raw, {'result' if has_model else 'None'}, "
-            f"{'model' if has_model else 'None'})}}",
-            'save_figure(spec, make_resolver(curves), OUT.with_name(OUT.name + ".pdf"))',
-            'save_figure(spec, make_resolver(curves), OUT.with_name(OUT.name + ".svg"))',
+            (f"curves = {{{dataset.id!r}: dataset_curves(raw, run, {fit_args})}}" if stages else
+             f"curves = {{{dataset.id!r}: curves_for(s, raw, {fit_args})}}"),
+            "for suffix, spec in figures.items():",
+            '    stem = OUT.name + ("_" + suffix if suffix else "")',
+            '    save_figure(spec, make_resolver(curves), OUT.with_name(stem + ".pdf"))',
+            '    save_figure(spec, make_resolver(curves), OUT.with_name(stem + ".svg"))',
         ]
     return "\n".join(out) + "\n"
 

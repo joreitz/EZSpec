@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .. import __version__
+from .. import __version__, numfmt
 from .. import units as U
 from .._backend import HAVE_RUST, backend_name, set_backend
 from ..export.figure import curves_for, default_spec
@@ -69,7 +69,8 @@ Range (masks, forced regions, noise/fit range) · Peak.</li>
 <li><b>σ</b>: import a σ column or add “Estimate noise → σ” – otherwise σ is treated as unknown (no χ²).</li>
 <li><b>Model</b>: Peak tool (click = new peak; drag markers = position/height/width), “Find peaks”,
 “+ Component” (background, classic function, custom formula). Table: start value, bounds, vary, expression.</li>
-<li><b>Fit</b>: Ctrl+R. Results panel: statistics, warnings, derived quantities, correlations, residuals.</li>
+<li><b>Fit</b>: Ctrl+R. Results panel: statistics, warnings, derived quantities, correlations, residuals.
+The report always states the baseline. More significant digits: View → Number format.</li>
 <li><b>Combine</b>: Ctrl+K – ratio, difference or arbitrary x/y formulas from several datasets
 (σ is propagated, alignment is checked automatically).</li>
 <li><b>Up/down sweeps</b> (e.g. a current ramp): displayed in acquisition order; “+ Step → Range →
@@ -77,7 +78,8 @@ Select sweeps / Average sweeps” separates rising and falling ramps.</li>
 <li><b>Calibration</b> (e.g. λ(I, T)): on import, select column T under “Extra variables”,
 “+ Component → Surface f(x, v)”, fit, then Analysis → “Apply fit as x calibration”.</li>
 <li><b>Go further</b>: profile CI, bootstrap, MCMC, baseline systematics, compare variants, series/global fit (Ctrl+G).</li>
-<li><b>Export</b>: figure (Ctrl+E), tables, Python script (reproduces everything from the raw data).</li>
+<li><b>Export</b>: publication figure of the current view (Ctrl+E – result, raw data or a selected
+processing step), tables, Python script (reproduces everything from the raw data).</li>
 </ol>
 <p>Every action can be undone (Ctrl+Z); the history is shown in the “History” dock.</p>"""
 
@@ -105,6 +107,11 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.state = AppState(self)
         self.settings = QtCore.QSettings("EZSpec", "EZSpec")
+        try:
+            numfmt.set_precision(int(self.settings.value("numfmt/unc_digits", 2)),
+                                 int(self.settings.value("numfmt/digits", 6)))
+        except (TypeError, ValueError):
+            numfmt.set_precision(2, 6)
         self._task = None
         self._range_target = None
         self.setAcceptDrops(True)
@@ -179,7 +186,8 @@ class MainWindow(QtWidgets.QMainWindow):
         f.addAction("Apply template…", self.apply_template)
         f.addSeparator()
         exp = f.addMenu("Export")
-        exp.addAction("Figure…", self.figure_dialog, QtGui.QKeySequence("Ctrl+E"))
+        exp.addAction("Figure of the current view…", lambda: self.figure_dialog(), QtGui.QKeySequence("Ctrl+E"))
+        exp.addAction("Figure of the raw data…", lambda: self.figure_dialog("raw"))
         exp.addAction("Fit results (CSV/JSON/report)…", self.export_results)
         exp.addAction("Python script (reproducible)…", self.export_script)
         f.addSeparator()
@@ -223,6 +231,28 @@ class MainWindow(QtWidgets.QMainWindow):
         for d in (self.d_data, self.d_pipe, self.d_model, self.d_res, self.d_hist):
             v.addAction(d.toggleViewAction())
         v.addSeparator()
+        nf = v.addMenu("Number format")
+        nf.setToolTipsVisible(True)
+        prec = numfmt.get_precision()
+        g1 = QtGui.QActionGroup(self)
+        sub = nf.addMenu("Values with uncertainty")
+        for n in (1, 2, 3, 4, 6, 8, 0):
+            a = QtGui.QAction("no rounding" if n == 0 else f"{n} significant digit{'s' if n > 1 else ''} of the "
+                              "uncertainty", self, checkable=True)
+            a.setChecked(prec["unc_digits"] == n)
+            a.triggered.connect(lambda _=False, n=n: self.set_number_format(unc_digits=n))
+            g1.addAction(a)
+            sub.addAction(a)
+        g2 = QtGui.QActionGroup(self)
+        sub2 = nf.addMenu("Values without uncertainty")
+        for n in (4, 6, 8, 10, 12, 15, 17):
+            a = QtGui.QAction(f"{n} significant digits" + (" (full double precision)" if n == 17 else ""), self,
+                              checkable=True)
+            a.setChecked(prec["digits"] == n)
+            a.triggered.connect(lambda _=False, n=n: self.set_number_format(digits=n))
+            g2.addAction(a)
+            sub2.addAction(a)
+        v.addSeparator()
         for i, key in enumerate(("navigate", "anchor", "region", "peak"), 1):
             act = v.addAction(f"Tool: {self.plot.mode_actions[key].text()}",
                               lambda k=key: self.plot.set_mode(k))
@@ -250,6 +280,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.datasets_panel.combineRequested.connect(self.combine_dialog)
         self.pipeline_panel.calibrationRequested.connect(lambda: self.calibration_dialog(from_pipeline=True))
         self.pipeline_panel.rangeTargetChanged.connect(self.plot.set_range_target)
+        self.plot.figureRequested.connect(lambda: self.figure_dialog())
         self.model_panel.fitRequested.connect(self.run_fit)
         self.model_panel.autoPeaksRequested.connect(self.auto_peaks)
         self.results_panel.profileRequested.connect(self.run_profile)
@@ -264,6 +295,16 @@ class MainWindow(QtWidgets.QMainWindow):
         p.peakAdded.connect(self._peak_added)
         p.peakDragged.connect(self._peak_dragged)
         p.cursorMoved.connect(lambda x, y: self.cursor_label.setText(f"x = {x:.6g}   y = {y:.6g}"))
+
+    def set_number_format(self, unc_digits=None, digits=None):
+        """Display precision of results, report and tables (exports keep full precision)."""
+        numfmt.set_precision(unc_digits, digits)
+        prec = numfmt.get_precision()
+        self.settings.setValue("numfmt/unc_digits", prec["unc_digits"])
+        self.settings.setValue("numfmt/digits", prec["digits"])
+        self.model_panel.refresh()
+        self.results_panel.refresh()
+        self.pipeline_panel.refresh()
 
     # ================================================================ refresh
     def schedule_refresh(self, *args):
@@ -829,14 +870,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.backend_label.setText("Backend: Rust" if name == "rust" else "Backend: Python (reference)")
 
     # ================================================================ export
-    def figure_dialog(self):
+    @staticmethod
+    def _figure_key(ds, stage):
+        return ds.id if stage == "result" else f"{ds.id}__{stage}"
+
+    def figure_dialog(self, stage=None):
+        """Publication figure of a stage: 'result', 'raw' or a step id (default: what the plot shows)."""
         ds = self.state.current()
         if ds is None:
             return
-        key = ds.id
-        dlg = FigureDialog(ds, self.state.project.figures.get(key), self)
+        if stage is None:
+            stage = self.state.selected_step or "result"
+        dlg = FigureDialog(ds, self.state.project.figures.get(self._figure_key(ds, stage)), self, stage=stage)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            self.state.project.figures[key] = dlg.spec
+            self.state.project.figures[self._figure_key(ds, dlg.stage)] = dlg.spec
             self.statusBar().showMessage("Figure saved in project.", 3000)
 
     def export_results(self):
@@ -873,8 +920,16 @@ class MainWindow(QtWidgets.QMainWindow):
             curves = curves_for(run.final, ds.raw, ds.fit_result)
             spec = default_spec(ds.id, curves, U.AXIS_LABELS.get(run.final.x_unit, run.final.x_label),
                                 run.final.y_label)
+        extra = {}
+        steps = [st.id for st in ds.pipeline]
+        for key, fspec in self.state.project.figures.items():
+            if key.startswith(ds.id + "__"):
+                stage = key[len(ds.id) + 2:]
+                suffix = "raw" if stage == "raw" else f"step{steps.index(stage) + 1}" if stage in steps else None
+                if suffix:
+                    extra[suffix] = fspec
         code = generate_script(ds, raw_path=str(raw_path), figure_spec=spec,
-                               out_stem=str(path.with_name(path.stem + "_results")))
+                               out_stem=str(path.with_name(path.stem + "_results")), extra_figures=extra)
         path.write_text(code, encoding="utf-8")
         self.statusBar().showMessage(f"Script written: {path}", 5000)
 

@@ -397,3 +397,70 @@ def test_calibration_surface_slices_and_dialog(app, win):
     w.state.undo.undo()
     pump(app)
     assert not meas.pipeline.steps or meas.pipeline.steps[-1].op != "calibrate_x"
+
+
+def test_figure_of_raw_data_and_single_step(app, win, tmp_path):
+    w = win
+    ds = w.state.current()
+    w.pipeline_panel.add_step("baseline_arpls")
+    pump(app)
+    sid = w.state.selected_step
+    dlg = FigureDialog(ds, None, w, stage=sid)              # what the plot shows for the selected step
+    assert dlg.stage == sid and len(dlg.spec["panels"]) == 2
+    curves = [t["curve"] for t in dlg.spec["panels"][0]["traces"]]
+    assert f"step:{sid}:baseline" in curves
+    dlg.stage_combo.setCurrentIndex(dlg.stage_combo.findData("raw"))
+    assert dlg.stage == "raw" and [t["curve"] for t in dlg.spec["panels"][0]["traces"]] == ["raw:data"]
+    dlg._add_curve(f"step:{sid}:baseline")
+    assert dlg.spec["panels"][0]["traces"][-1]["curve"] == f"step:{sid}:baseline"
+    dlg.traces.cellWidget(0, 4).setCurrentText("scatter")
+    assert dlg.spec["panels"][0]["traces"][0]["kind"] == "scatter"
+    dlg.traces.setCurrentCell(1, 1)
+    dlg._remove_curve()
+    assert len(dlg.spec["panels"][0]["traces"]) == 1
+    for _ in range(4):                                     # remove, style, add, content
+        dlg.undo.undo()
+    assert dlg.stage == sid and dlg.stage_combo.currentData() == sid      # content change is undoable
+    out = tmp_path / "step.pdf"
+    from ezspec.export.figure import make_resolver, save_figure
+    save_figure(dlg.spec, make_resolver(dlg.curves), out)
+    assert out.stat().st_size > 1000
+    dlg.accept()
+    w.state.project.figures[w._figure_key(ds, dlg.stage)] = dlg.spec
+    assert f"{ds.id}__{sid}" in w.state.project.figures
+
+
+def test_number_format_and_baseline_statement(app, win):
+    from ezspec import numfmt
+    w = win
+    ds = w.state.current()
+    w.pipeline_panel.add_step("baseline_arpls")
+    pump(app)
+    w.state.select_step(None)
+    w.plot.peakAdded.emit(1001, 92)
+    pump(app)
+    w.run_fit()
+    wait(app, w)
+    col = w.model_panel.C_RES
+    short = w.model_panel.table.item(0, col).text()
+    try:
+        w.set_number_format(unc_digits=4)
+        long = w.model_panel.table.item(0, col).text()
+        assert len(long) > len(short) and long.split("±")[1].strip().replace(".", "").lstrip("0").__len__() == 4
+        assert "4 significant digit" in w.results_panel.report.toPlainText()
+        w.set_number_format(unc_digits=0)
+        assert len(w.model_panel.table.item(0, col).text()) > len(long)        # unrounded
+    finally:
+        w.set_number_format(unc_digits=2, digits=6)
+    assert numfmt.get_precision() == {"unc_digits": 2, "digits": 6}
+    stats = {w.results_panel.stats.item(i, 0).text(): w.results_panel.stats.item(i, 1).text()
+             for i in range(w.results_panel.stats.rowCount())}
+    assert stats["Baseline"].startswith("arPLS (Whittaker), λ = ")
+    dlg = FigureDialog(ds, None, w)
+    pb = dlg.spec["panels"][0]["param_box"]
+    assert pb["names"] == ["Baseline (statement)"] and "arPLS" in pb["lines"][0]
+    assert dlg.params.item(0).checkState() == QtCore.Qt.Checked
+    dlg.params.item(1).setCheckState(QtCore.Qt.Checked)
+    dlg.box_digits.setValue(3)
+    pb = dlg.spec["panels"][0]["param_box"]
+    assert len(pb["lines"]) == 2 and pb["digits"] == 3

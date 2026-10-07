@@ -60,7 +60,7 @@ def new_spec(preset: str = "elsevier_1") -> dict:
         "format": "ezspec.figure", "version": 1, "preset": preset,
         "width_mm": p["width_mm"], "height_mm": p["height_mm"], "font_size": p["font_size"],
         "font_family": "sans-serif", "line_width": 1.0, "axes_line_width": 0.6, "tick_direction": "in",
-        "colors": "petroff10", "panel_labels": False, "dpi": 600, "title": "",
+        "colors": "petroff10", "panel_labels": False, "dpi": 600, "title": "", "content": "result",
         "panels": [],
     }
 
@@ -151,6 +151,163 @@ def curves_for(processed, raw=None, result=None, model=None, n_dense: int = 2000
         if it["xd"] is not None:
             c[f"slice_fit:{it['label']}"] = (it["xd"], it["yd"], None)
     return c
+
+
+def _ordered(order, *arrays):
+    if order is None:
+        return arrays
+    return tuple(None if a is None else np.asarray(a)[order] for a in arrays)
+
+
+def _data_curves(c: dict, prefix: str, s) -> None:
+    """Data of spectrum ``s`` (drawing order) and its y(x, v) slices under ``prefix``."""
+    from ..slices import slice_curves
+    from ..sweeps import display_order
+    c[prefix + "data"] = _ordered(display_order(s), s.x, s.y, s.sigma)
+    for it in slice_curves(s):
+        c[f"{prefix}slice_data:{it['label']}"] = (it["x"], it["y"], it["sigma"])
+
+
+def step_curves(inp, out, op: str, params: dict | None = None, prefix: str = "") -> dict:
+    """Curves of one processing step, as shown in the interactive step view:
+    input, output and – depending on the step – baseline, baseline-corrected
+    data, smoothed curve and excluded points."""
+    from ..sweeps import display_order
+    params = params or {}
+    c = {}
+    _data_curves(c, prefix + "input:", inp)
+    _data_curves(c, prefix + "output:", out)
+    po = display_order(out)
+    if op.startswith("baseline_") and "baseline" in out.aux:
+        corrected = out.y if params.get("subtract", True) else out.y - out.aux["baseline"]
+        c[prefix + "baseline"] = _ordered(po, out.x, out.aux["baseline"], None)
+        c[prefix + "corrected"] = _ordered(po, out.x, corrected, out.sigma)
+    if "smoothed" in out.aux and "smoothed" not in inp.aux:
+        c[prefix + "smoothed"] = _ordered(po, out.x, out.aux["smoothed"], None)
+    if out.exclude is not None and out.exclude.any():
+        ex = out.exclude
+        c[prefix + "excluded"] = (out.x[ex], out.y[ex], None)
+    return c
+
+
+def dataset_curves(raw, run, result=None, model=None, n_dense: int = 2000) -> dict:
+    """Curves of the final result (:func:`curves_for`), of the raw data
+    (``raw:…``) and of every processing step (``step:<id>:…``), so that any
+    intermediate stage can be exported as a publication figure."""
+    c = curves_for(run.final, raw, result, model, n_dense)
+    _data_curves(c, "raw:", raw)
+    for r in run.results:
+        if r.error is None and r.output is not None and r.input is not None and r.step.enabled:
+            c.update(step_curves(r.input, r.output, r.step.op, r.step.params, prefix=f"step:{r.step.id}:"))
+    return c
+
+
+def dataset_stages(raw, run) -> list:
+    """Exportable stages: final result, raw data and every successful step."""
+    from ..ops import get_op
+    stages = [{"id": "result", "title": "Result (processed data and fit)", "spectrum": run.final, "op": None},
+              {"id": "raw", "title": "Raw data", "spectrum": raw, "op": None}]
+    for i, r in enumerate(run.results, 1):
+        if r.error is None and r.output is not None and r.step.enabled:
+            try:
+                title = get_op(r.step.op).title
+            except KeyError:
+                title = r.step.op
+            stages.append({"id": r.step.id, "title": f"Step {i}: {r.step.label or title}", "spectrum": r.output,
+                           "input": r.input, "op": r.step.op, "params": dict(r.step.params)})
+    return stages
+
+
+def _data_traces(source, curves, prefix, label, color="#555555", lw=0.8, ms=2.0, zorder=1, cycle=None) -> list:
+    """Traces for one spectrum: per-slice scatter for y(x, v) data, else line (or points for small N)."""
+    slices = [k[len(prefix) + len("slice_data:"):] for k in curves if k.startswith(prefix + "slice_data:")]
+    if slices:
+        cyc = cycle or color_cycle()
+        return [new_trace(source, f"{prefix}slice_data:{lab}", "scatter", color=cyc[i % len(cyc)], ms=2.5,
+                          label=lab, zorder=zorder) for i, lab in enumerate(slices)]
+    n = len(curves[prefix + "data"][0])
+    return [new_trace(source, prefix + "data", "scatter" if n <= 400 else "line", label=label, color=color,
+                      lw=lw, ms=ms, zorder=zorder)]
+
+
+def stage_spec(source: str, curves: dict, stage: dict, preset: str = "elsevier_1", y_label: str = "") -> dict:
+    """Default figure for a stage from :func:`dataset_stages` (mirrors the interactive view)."""
+    s = stage["spectrum"]
+    xl = axis_label_for(s)
+    yl = y_label or s.y_label or "Intensity"
+    from ..baseline_info import baseline_short, describe_baseline
+    recipes = [r for r in s.meta.get("baselines", []) if r.get("subtracted", True)]
+    if stage["id"] == "result":
+        spec = default_spec(source, curves, xl, yl, preset)
+        if recipes:            # a subtracted baseline is always stated in the figure (can be switched off)
+            from .. import numfmt
+            spec["panels"][0]["param_box"] = {"lines": [baseline_short(recipes)],
+                                              "names": [BASELINE_ITEM],
+                                              "digits": numfmt.get_precision()["unc_digits"]}
+        return spec
+    spec = new_spec(preset)
+    spec["content"] = stage["id"]
+    if stage["id"] == "raw":
+        main = new_panel(3.0, xlabel=xl, ylabel=yl, legend=None)
+        main["traces"] += _data_traces(source, curves, "raw:", "")
+        if any(t["label"] for t in main["traces"]):
+            main["legend"] = "best"
+        spec["panels"].append(main)
+        return spec
+    pre = f"step:{stage['id']}:"
+    op = stage["op"] or ""
+    main = new_panel(3.0, xlabel=xl, ylabel=yl)
+    if pre + "baseline" in curves:
+        main["xlabel"] = ""
+        main["traces"] += _data_traces(source, curves, pre + "input:", "Data")
+        rec = s.meta.get("baselines", [{}])[-1] if s.meta.get("baselines") else {}
+        label = describe_baseline(rec, short=True) if rec else "Baseline"
+        main["traces"].append(new_trace(source, pre + "baseline", "line", label=label, color="#3f90da",
+                                        lw=1.2, ls="--", zorder=3))
+        spec["panels"].append(main)
+        low = new_panel(1.5, xlabel=xl, ylabel="Corrected", legend=None, zero_line=True)
+        n = len(curves[pre + "corrected"][0])
+        low["traces"].append(new_trace(source, pre + "corrected", "scatter" if n <= 400 else "line",
+                                       color="#555555", lw=0.8, ms=2.0))
+        spec["panels"].append(low)
+        return spec
+    if pre + "smoothed" in curves:
+        main["traces"] += _data_traces(source, curves, pre + "input:", "Data", color="#9a9a9a", lw=0.6)
+        main["traces"].append(new_trace(source, pre + "smoothed", "line", label="Smoothed", color="#bd1f01",
+                                        lw=1.2, zorder=3))
+    elif op == "despike":
+        main["traces"] += _data_traces(source, curves, pre + "input:", "Before", color="#b0b0b0", lw=0.6)
+        main["traces"] += _data_traces(source, curves, pre + "output:", "After", zorder=2)
+    else:
+        main["traces"] += _data_traces(source, curves, pre + "output:", "")
+        main["legend"] = "best" if len(main["traces"]) > 1 else None
+    if pre + "excluded" in curves:
+        main["traces"].append(new_trace(source, pre + "excluded", "scatter", label="Excluded", color="#c8c8c8",
+                                        ms=2.5, zorder=4))
+        main["legend"] = "best"
+    spec["panels"].append(main)
+    return spec
+
+
+def curve_title(key: str, stages: list | None = None) -> str:
+    """Readable name of a curve key for the figure editor."""
+    names = {"processed": "processed data", "raw": "raw data (all)", "fit": "fit (at data points)",
+             "fit_dense": "fit", "residuals": "residuals", "normalized_residuals": "residuals / σ",
+             "baseline": "baseline (final)", "baseline_total": "total subtracted baseline",
+             "processed_plus_baseline": "processed + baseline", "smoothed": "smoothed (final)"}
+    if key in names:
+        return names[key]
+    if key.startswith("step:"):
+        _, sid, rest = key.split(":", 2)
+        title = next((st["title"] for st in (stages or []) if st["id"] == sid), f"step {sid}")
+        return f"{title} – {rest.replace(':data', '').replace('slice_data:', '')}"
+    if key.startswith("raw:"):
+        return "raw data – " + key[4:].replace("slice_data:", "") if key != "raw:data" else "raw data"
+    for p, t in (("component_dense:", "component "), ("component:", "component (at data) "),
+                 ("slice_data:", "data "), ("slice_fit:", "fit ")):
+        if key.startswith(p):
+            return t + key[len(p):].rstrip("_")
+    return key
 
 
 def make_resolver(curves: dict) -> Callable:
@@ -298,9 +455,70 @@ def _draw_panel(ax, panel, resolve, cycle):
         _secondary(ax, panel["secondary_x"])
     pb = panel.get("param_box")
     if pb and pb.get("lines"):
-        ax.text(pb.get("x", 0.97), pb.get("y", 0.95), "\n".join(pb["lines"]), transform=ax.transAxes,
-                ha=pb.get("ha", "right"), va="top", fontsize=None,
-                bbox={"boxstyle": "round,pad=0.3", "fc": "white", "ec": "0.7", "lw": 0.5})
+        txt = ax.text(0.97, 0.95, "\n".join(pb["lines"]), transform=ax.transAxes, ha="right", va="top",
+                      fontsize="small", zorder=10,
+                      bbox={"boxstyle": "round,pad=0.3", "fc": "white", "ec": "0.7", "lw": 0.5})
+        _place_box(ax, txt, pb.get("loc", "best"), allow_headroom=not panel.get("ylim"))
+
+
+BOX_CORNERS = {"upper right": (0.97, 0.95, "right", "top"), "upper left": (0.03, 0.95, "left", "top"),
+               "lower right": (0.97, 0.05, "right", "bottom"), "lower left": (0.03, 0.05, "left", "bottom")}
+
+
+def _place_box(ax, txt, loc: str = "best", allow_headroom: bool = True) -> None:
+    """Put a text box into a corner; 'best' picks the corner covering the fewest data points
+    (the legend, placed later with loc='best', then avoids the box)."""
+    if loc in BOX_CORNERS:
+        x, y, ha, va = BOX_CORNERS[loc]
+        txt.set_position((x, y))
+        txt.set_ha(ha)
+        txt.set_va(va)
+        return
+    fig = ax.figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    canvas = FigureCanvasAgg(fig) if not hasattr(fig.canvas, "get_renderer") else fig.canvas
+    renderer = canvas.get_renderer()
+    ax.get_xlim(), ax.get_ylim()                 # apply pending autoscaling before mapping data to axes coords
+    to_axes = ax.transAxes.inverted()
+    pts = []
+    for line in ax.lines:
+        xy = line.get_xydata()
+        if len(xy):
+            pts.append(to_axes.transform(ax.transData.transform(xy)))
+    for coll in ax.collections:
+        off = coll.get_offsets()
+        if len(off):
+            pts.append(to_axes.transform(ax.transData.transform(off)))
+    P = np.vstack(pts) if pts else np.zeros((0, 2))
+    best = None
+    for name, (x, y, ha, va) in BOX_CORNERS.items():
+        txt.set_position((x, y))
+        txt.set_ha(ha)
+        txt.set_va(va)
+        bb = txt.get_window_extent(renderer).transformed(ax.transAxes.inverted())
+        inside = int(np.count_nonzero((P[:, 0] >= bb.x0) & (P[:, 0] <= bb.x1) &
+                                      (P[:, 1] >= bb.y0) & (P[:, 1] <= bb.y1))) if len(P) else 0
+        if best is None or inside < best[0]:
+            best = (inside, name)
+    x, y, ha, va = BOX_CORNERS[best[1]]
+    txt.set_position((x, y))
+    txt.set_ha(ha)
+    txt.set_va(va)
+    if best[0] and allow_headroom and ax.get_yscale() == "linear":
+        # still covering data: extend the y range so the box sits above (or below) the curves
+        bb = txt.get_window_extent(renderer).transformed(ax.transAxes.inverted())
+        under = P[(P[:, 0] >= bb.x0) & (P[:, 0] <= bb.x1)]
+        lo, hi = ax.get_ylim()
+        if va == "top" and len(under):
+            top = float(np.max(under[:, 1]))
+            room = bb.y0 - 0.03
+            if 0 < room < top:
+                ax.set_ylim(lo, lo + (hi - lo) * top / room)
+        elif va == "bottom" and len(under):
+            bottom = float(np.min(under[:, 1]))
+            room = bb.y1 + 0.03
+            if bottom < room < 1:
+                ax.set_ylim(hi - (hi - lo) * (1 - bottom) / (1 - room), hi)
 
 
 def render_figure(spec: dict, resolve: Callable):
@@ -348,12 +566,28 @@ def _metadata(path, fmt):
     return None
 
 
-def param_box_lines(result, names: list, labels: dict | None = None) -> list:
-    """Formatted 'name = value ± error' lines for a parameter box."""
+BASELINE_ITEM = "Baseline (statement)"
+
+
+def param_box_lines(result, names: list, labels: dict | None = None, digits: int | None = None,
+                    baselines: list | None = None, model_spec: dict | None = None) -> list:
+    """Formatted 'name = value ± error' lines for a parameter box, rounded to
+    ``digits`` significant digits of the uncertainty (None: global setting,
+    0: no rounding). The pseudo-name :data:`BASELINE_ITEM` adds a line stating
+    the baseline (``baselines``: recipes; default: those of ``result``)."""
+    from ..baseline_info import baseline_short
     from ..fit.result import fmt_value
     out = []
-    table = result.derived_table()
+    table = result.derived_table() if result is not None else {}
     for n in names:
+        if n == BASELINE_ITEM:
+            recipes = baselines if baselines is not None else (result.provenance.get("baselines")
+                                                               if result is not None else [])
+            spec = model_spec if model_spec is not None else (result.model_spec if result is not None else None)
+            out.append(baseline_short(recipes, spec))
+            continue
+        if result is None:
+            continue
         if n in result.params:
             p = result.params[n]
             v, e = p.value, p.stderr
@@ -361,5 +595,5 @@ def param_box_lines(result, names: list, labels: dict | None = None) -> list:
             comp, _, key = n.partition(".")
             v, e = table[comp][key]
         lab = (labels or {}).get(n, n)
-        out.append(f"{lab} = {fmt_value(v, e)}")
+        out.append(f"{lab} = {fmt_value(v, e, digits)}")
     return out

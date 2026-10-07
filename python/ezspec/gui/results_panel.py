@@ -7,7 +7,9 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..fit import stats as S
+from ..baseline_info import baseline_short, baseline_statement
 from ..fit.result import fmt_value
+from ..numfmt import fmt_num
 from .theme import SEVERITY_COLOR, SEVERITY_ICON
 
 TIPS = {
@@ -27,11 +29,14 @@ TIPS = {
 }
 
 
-def _g(v, spec=".5g"):
+def _g(v, spec=None):
+    """Number for the statistics table; ``spec=None`` uses the significant-digit setting."""
     if v is None:
         return "–"
     try:
-        return format(v, spec) if np.isfinite(v) else str(v)
+        if not np.isfinite(v):
+            return str(v)
+        return fmt_num(v) if spec is None else format(v, spec)
     except (TypeError, ValueError):
         return str(v)
 
@@ -163,18 +168,19 @@ class ResultsPanel(QtWidgets.QWidget):
         self.header.setText(f"<b>{ok}</b> · {r.method} · {r.nfev} function evaluations{stale}")
         st = r.stats
         rows = [("N / p / ν", f"{st.n_points} / {st.n_varys} / {st.dof}"),
+                ("Baseline", baseline_short(r.provenance.get("baselines"), r.model_spec, prefix=False)),
                 ("σ source", st.sigma_label),
                 ("Covariance", {"absolute": "absolute", "scaled": "scaled (by √χ²_ν or s)",
                                 "unavailable": "not available"}[st.covariance_mode])]
         if st.chi2 is not None:
             lo, hi = st.redchi_band
-            rows += [("χ²", _g(st.chi2, ".6g")),
+            rows += [("χ²", _g(st.chi2)),
                      ("χ²_ν", f"{_g(st.redchi, '.4g')}   (expected 1σ band {lo:.3g} … {hi:.3g})"),
                      ("P(χ² ≥ obs.) ≈", _g(st.chi2_pvalue, ".3g"))]
         else:
             rows += [("χ²", "undefined (σ unknown)")]
-        rows += [("s", _g(st.s_res)), ("RMSE", _g(st.rmse)), ("RSS", _g(st.rss, ".6g")),
-                 ("AICc", _g(st.aicc, ".6g")), ("AIC", _g(st.aic, ".6g")), ("BIC", _g(st.bic, ".6g")),
+        rows += [("s", _g(st.s_res)), ("RMSE", _g(st.rmse)), ("RSS", _g(st.rss)),
+                 ("AICc", _g(st.aicc)), ("AIC", _g(st.aic)), ("BIC", _g(st.bic)),
                  ("IC form", st.ic_form),
                  ("R²", f"{_g(st.r2, '.6f')}  (descriptive)"),
                  ("Runs test", f"{st.runs.get('runs')} runs, expected {_g(st.runs.get('expected'), '.1f')}, "
@@ -186,6 +192,8 @@ class ResultsPanel(QtWidgets.QWidget):
         for i, (k, val) in enumerate(rows):
             a = QtWidgets.QTableWidgetItem(k)
             tip = next((t for key, t in TIPS.items() if k.startswith(key)), None)
+            if k == "Baseline":
+                tip = "\n".join(baseline_statement(r.provenance.get("baselines"), r.model_spec))
             if tip:
                 a.setToolTip(tip)
             self.stats.setItem(i, 0, a)

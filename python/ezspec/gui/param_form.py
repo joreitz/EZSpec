@@ -6,18 +6,13 @@ import math
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .. import numfmt as _numfmt
 from ..ops.registry import OpSpec
 
 
 def fmt_num(v) -> str:
-    if v is None:
-        return ""
-    if v == 0:
-        return "0"
-    a = abs(v)
-    if 1e-3 <= a < 1e6:
-        return f"{v:.6g}"
-    return f"{v:.4e}"
+    """Editable number: shown with the global significant-digit setting (View → Number format)."""
+    return _numfmt.fmt_num(v)
 
 
 def parse_num(text: str):
@@ -40,13 +35,16 @@ class SciEdit(QtWidgets.QLineEdit):
 
     def setValue(self, v):
         self._value = v
-        self.setText(fmt_num(v))
+        self._shown = fmt_num(v)
+        self.setText(self._shown)
         self.setStyleSheet("")
 
     def value(self):
         return self._value
 
     def _commit(self):
+        if self.text() == self._shown:      # unchanged display text: keep the full-precision value
+            return
         try:
             v = parse_num(self.text())
         except ValueError:
@@ -56,6 +54,7 @@ class SciEdit(QtWidgets.QLineEdit):
             self.setValue(self._value)
             return
         self.setStyleSheet("")
+        self._shown = self.text()
         if v != self._value:
             self._value = v
             self.valueEdited.emit(v)
