@@ -222,97 +222,97 @@ def format_report(r: FitResult) -> str:
     st = r.stats
     L = []
     L.append("=" * 72)
-    L.append("EZSpec Fit-Bericht")
+    L.append("EZSpec fit report")
     L.append("=" * 72)
-    L.append(f"Methode: {r.method}   Erfolg: {'ja' if r.success else 'NEIN'}   Funktionsaufrufe: {r.nfev}")
+    L.append(f"Method: {r.method}   Success: {'yes' if r.success else 'NO'}   Function evaluations: {r.nfev}")
     if r.message:
-        L.append(f"Meldung: {r.message}")
-    L.append(f"Punkte N = {st.n_points}   freie Parameter p = {st.n_varys}   Freiheitsgrade ν = {st.dof}")
-    L.append(f"σ-Quelle: {st.sigma_label}   Gewichtung: {st.weighting}")
-    cov = {"absolute": "absolut (σ als bekannt angenommen)",
-           "scaled": "skaliert mit √χ²_ν bzw. s (σ aus Residuen geschätzt)",
-           "unavailable": "NICHT verfügbar"}[st.covariance_mode]
-    L.append(f"Kovarianz: {cov}")
+        L.append(f"Message: {r.message}")
+    L.append(f"Points N = {st.n_points}   free parameters p = {st.n_varys}   degrees of freedom ν = {st.dof}")
+    L.append(f"σ source: {st.sigma_label}   Weighting: {st.weighting}")
+    cov = {"absolute": "absolute (σ taken as known)",
+           "scaled": "scaled by √χ²_ν or s (σ estimated from the residuals)",
+           "unavailable": "NOT available"}[st.covariance_mode]
+    L.append(f"Covariance: {cov}")
     L.append("")
-    L.append("Parameter")
+    L.append("Parameters")
     L.append("-" * 72)
     for p in r.params.values():
         flag = []
         if not p.vary and not p.expr:
-            flag.append("fest")
+            flag.append("fixed")
         if p.expr:
             flag.append(f"= {p.expr}")
         if p.at_bound:
-            flag.append(f"AM BOUND ({p.at_bound}) – SE nicht belastbar")
+            flag.append(f"AT BOUND ({p.at_bound}) – SE not reliable")
         elif p.near_bound:
-            flag.append("Bound < 2 SE entfernt – SE nicht belastbar")
+            flag.append("bound < 2 SE away – SE not reliable")
         rel = f" ({100 * p.rel_stderr:.2g} %)" if p.stderr and np.isfinite(p.rel_stderr) and p.rel_stderr < 10 else ""
         L.append(f"  {p.name:<18} {fmt_value(p.value, p.stderr):<30}{rel:<10} {'; '.join(flag)}")
     if r.derived:
         L.append("")
-        L.append("Abgeleitete Größen (Unsicherheit über volle Kovarianz propagiert)")
+        L.append("Derived quantities (uncertainty propagated with the full covariance)")
         L.append("-" * 72)
         for comp, vals in r.derived_table().items():
             items = ", ".join(f"{k} = {fmt_value(v, e)}" for k, (v, e) in vals.items())
             L.append(f"  {comp}: {items}")
     L.append("")
-    L.append("Güte")
+    L.append("Goodness of fit")
     L.append("-" * 72)
     if st.chi2 is not None:
         lo, hi = st.redchi_band
         L.append(f"  χ² = {_g(st.chi2)}   χ²_ν = {_g(st.redchi, '.4g')}   "
-                 f"(erwartet 1, 1σ-Band [{lo:.3g}, {hi:.3g}])")
-        L.append(f"  P(χ² ≥ beobachtet) ≈ {_g(st.chi2_pvalue, '.3g')}  (Näherung: linear, Gauß, σ exakt)")
+                 f"(expected 1, 1σ band [{lo:.3g}, {hi:.3g}])")
+        L.append(f"  P(χ² ≥ observed) ≈ {_g(st.chi2_pvalue, '.3g')}  (approximation: linear, Gaussian, σ exact)")
         if st.poisson_deviance is not None:
-            L.append(f"  Poisson-Devianz D = {_g(st.poisson_deviance)}   D/ν = {_g(st.poisson_deviance / st.dof, '.4g')}"
-                     "  (Pearson-χ² oben)")
+            L.append(f"  Poisson deviance D = {_g(st.poisson_deviance)}   D/ν = {_g(st.poisson_deviance / st.dof, '.4g')}"
+                     "  (Pearson χ² above)")
     else:
-        L.append("  χ²: nicht definiert (σ unbekannt) – stattdessen:")
+        L.append("  χ²: not defined (σ unknown) – instead:")
     L.append(f"  RSS = {_g(st.rss)}   s = √(RSS/ν) = {_g(st.s_res)}   RMSE = √(RSS/N) = {_g(st.rmse)}")
     L.append(f"  AIC = {_g(st.aic, '.6g')}   AICc = {_g(st.aicc, '.6g')}   BIC = {_g(st.bic, '.6g')}")
-    L.append(f"     Form: {st.ic_form}; nur Differenzen bei identischen Daten sinnvoll")
+    L.append(f"     Form: {st.ic_form}; only differences on identical data are meaningful")
     L.append(f"  R² = {_g(st.r2, '.6f')}   R²_adj = {_g(st.adj_r2, '.6f')}   "
-             "(deskriptiv – nicht zum Modellvergleich)")
+             "(descriptive – not for model comparison)")
     L.append("")
-    L.append("Residuen-Diagnostik")
+    L.append("Residual diagnostics")
     L.append("-" * 72)
     ru = st.runs
     if ru:
-        L.append(f"  Runs-Test: {ru.get('runs')} Runs (erwartet {_g(ru.get('expected'), '.1f')}), "
-                 f"z = {_g(ru.get('z'), '.2f')}, p(zu wenige) = {_g(ru.get('p_too_few'), '.3g')}")
-    L.append(f"  Lag-1-Autokorrelation = {_g(st.lag1_autocorr, '.3f')}   "
+        L.append(f"  Runs test: {ru.get('runs')} runs (expected {_g(ru.get('expected'), '.1f')}), "
+                 f"z = {_g(ru.get('z'), '.2f')}, p(too few) = {_g(ru.get('p_too_few'), '.3g')}")
+    L.append(f"  Lag-1 autocorrelation = {_g(st.lag1_autocorr, '.3f')}   "
              f"Durbin–Watson ≈ {_g(st.durbin_watson, '.3f')}")
     nm = st.normality
     if nm:
-        L.append(f"  Schiefe = {_g(nm.get('skewness'), '.3f')}   Exzess = {_g(nm.get('excess_kurtosis'), '.3f')}"
+        L.append(f"  Skewness = {_g(nm.get('skewness'), '.3f')}   Excess kurtosis = {_g(nm.get('excess_kurtosis'), '.3f')}"
                  f"   p(normal, D'Agostino) = {_g(nm.get('p_normal'), '.3g')}")
-    L.append(f"  Kondition der Jacobi-Matrix = {_g(st.jacobian_condition, '.3g')}")
+    L.append(f"  Jacobian condition number = {_g(st.jacobian_condition, '.3g')}")
     hc = r.high_correlations()
     if hc:
         L.append("")
-        L.append("Hohe Korrelationen |ρ| > 0,9")
+        L.append("High correlations |ρ| > 0.9")
         for a, b, c in hc:
             L.append(f"  ρ({a}, {b}) = {c:+.4f}")
     if r.warnings:
         L.append("")
-        L.append("Hinweise")
+        L.append("Notes")
         L.append("-" * 72)
         for w in r.warnings:
             tag = {"info": "i", "warning": "!", "error": "✗"}.get(w.severity, "!")
             L.append(f"  [{tag}] {w.message}")
-    for key, title in (("profile_ci", "Profil-Likelihood-Konfidenzintervalle"),
+    for key, title in (("profile_ci", "Profile likelihood confidence intervals"),
                        ("bootstrap", "Bootstrap"),
                        ("mcmc", "MCMC-Posterior (emcee)"),
-                       ("baseline_systematics", "Systematische Unsicherheit durch die Baseline")):
+                       ("baseline_systematics", "Systematic uncertainty from the baseline")):
         if key in r.extra:
             L.append("")
             L.append(title)
             L.append("-" * 72)
             L.extend("  " + line for line in r.extra[key].get("summary", []))
     L.append("")
-    L.append("Modell")
+    L.append("Model")
     L.append("-" * 72)
     L.extend("  " + line for line in r.provenance.get("model_description", "").splitlines())
-    L.append(f"Daten-Hash: {r.data_hash[:16]}…   Backend: {r.provenance.get('backend')}   "
+    L.append(f"Data hash: {r.data_hash[:16]}…   Backend: {r.provenance.get('backend')}   "
              f"lmfit {r.provenance.get('lmfit')}")
     return "\n".join(L)

@@ -63,8 +63,8 @@ class Model:
         for c in self.components:
             for n in c.full_names():
                 if n in seen:
-                    raise ModelError(f"Parametername {n!r} kommt in zwei Komponenten vor "
-                                     f"({seen[n]} und {c.display_name}); Präfix ändern")
+                    raise ModelError(f"parameter name {n!r} occurs in two components "
+                                     f"({seen[n]} and {c.display_name}); change the prefix")
                 seen[n] = c.display_name
 
     def param_names(self) -> list:
@@ -80,7 +80,7 @@ class Model:
     def make_params(self) -> lmfit.Parameters:
         self.check()
         if not self.components:
-            raise ModelError("das Modell hat keine Komponenten")
+            raise ModelError("the model has no components")
         params = lmfit.Parameters()
         exprs = []
         for c in self.components:
@@ -89,7 +89,7 @@ class Model:
                 name = c.full_name(local)
                 value = s.value
                 if not s.expr and not (s.min <= value <= s.max):
-                    raise ModelError(f"Startwert von {name} ({value}) liegt außerhalb der Grenzen "
+                    raise ModelError(f"start value of {name} ({value}) lies outside the bounds "
                                      f"[{s.min}, {s.max}]")
                 params.add(name, value=value, min=s.min, max=s.max, vary=s.vary and not s.expr)
                 if s.expr:
@@ -98,7 +98,7 @@ class Model:
             try:
                 params[name].expr = expr
             except (NameError, SyntaxError) as exc:
-                raise ModelError(f"Ausdruck für {name} ungültig: {exc}") from None
+                raise ModelError(f"invalid expression for {name}: {exc}") from None
         return params
 
     def apply_values(self, values: dict) -> None:
@@ -154,7 +154,7 @@ class Model:
                 if c.kind in ("polynomial", "linear") and c.options.get("x0"):
                     opt = f" (x0 = {c.options['x0']:g})"
                 if c.kind == "polynomial":
-                    opt = f" Grad {c.options.get('order', 1)}" + opt
+                    opt = f" degree {c.options.get('order', 1)}" + opt
                 lines.append(f"{c.display_name}{opt}: {c.type.formula_text}")
         return "\n".join(lines)
 

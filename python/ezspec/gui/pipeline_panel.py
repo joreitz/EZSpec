@@ -9,12 +9,13 @@ from ..ops.baseline import whittaker_cutoff_points
 from .param_form import ParamForm, RangesDialog
 from .theme import SEVERITY_COLOR
 
-CATEGORY_ORDER = ["Bereich", "Korrektur", "Baseline", "Glätten", "Unsicherheit", "Skalierung", "Einheiten"]
+CATEGORY_ORDER = ["Range", "Correction", "Baseline", "Smoothing", "Uncertainty", "Scaling", "Units"]
 
 
 class DatasetsPanel(QtWidgets.QWidget):
     importRequested = QtCore.Signal()
     exampleRequested = QtCore.Signal()
+    combineRequested = QtCore.Signal()
 
     def __init__(self, state, parent=None):
         super().__init__(parent)
@@ -27,10 +28,12 @@ class DatasetsPanel(QtWidgets.QWidget):
         self.list.itemChanged.connect(self._renamed)
         lay.addWidget(self.list)
         row = QtWidgets.QHBoxLayout()
-        for text, slot, tip in (("Importieren…", self.importRequested.emit, "Text/CSV oder JCAMP-DX laden"),
-                                ("Beispiel", self.exampleRequested.emit, "synthetisches Raman-Spektrum laden"),
-                                ("Duplizieren", self._duplicate, "Kopie mit gleicher Pipeline und Modell"),
-                                ("Entfernen", self._remove, "Datensatz entfernen (rückgängig machbar)")):
+        for text, slot, tip in (("Import…", self.importRequested.emit, "Load text/CSV or JCAMP-DX"),
+                                ("Example", self.exampleRequested.emit, "Load a synthetic Raman spectrum"),
+                                ("Combine…", self.combineRequested.emit,
+                                 "Ratio/difference/formulas from several datasets (Ctrl+K)"),
+                                ("Duplicate", self._duplicate, "Copy with the same pipeline and model"),
+                                ("Remove", self._remove, "Remove dataset (can be undone)")):
             b = QtWidgets.QPushButton(text)
             b.setToolTip(tip)
             b.clicked.connect(slot)
@@ -73,7 +76,7 @@ class DatasetsPanel(QtWidgets.QWidget):
         ds = self.state.current()
         if ds is None:
             return
-        copy = Dataset(name=ds.name + " (Kopie)", raw=ds.raw, pipeline=ds.pipeline.copy(), model=ds.model.copy(),
+        copy = Dataset(name=ds.name + " (copy)", raw=ds.raw, pipeline=ds.pipeline.copy(), model=ds.model.copy(),
                        fit_options=type(ds.fit_options).from_dict(ds.fit_options.to_dict()),
                        raw_bytes=ds.raw_bytes, raw_ext=ds.raw_ext)
         self.state.add_dataset(copy)
@@ -81,6 +84,7 @@ class DatasetsPanel(QtWidgets.QWidget):
 
 class PipelinePanel(QtWidgets.QWidget):
     rangeTargetChanged = QtCore.Signal(str)
+    calibrationRequested = QtCore.Signal()
 
     def __init__(self, state, parent=None):
         super().__init__(parent)
@@ -91,13 +95,13 @@ class PipelinePanel(QtWidgets.QWidget):
         lay.setContentsMargins(4, 4, 4, 4)
         bar = QtWidgets.QHBoxLayout()
         self.add_btn = QtWidgets.QToolButton()
-        self.add_btn.setText("+ Schritt")
+        self.add_btn.setText("+ Step")
         self.add_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         self.add_btn.setMenu(self._build_menu())
         bar.addWidget(self.add_btn)
-        for text, slot, tip in (("↑", lambda: self._move(-1), "Schritt nach oben"),
-                                ("↓", lambda: self._move(+1), "Schritt nach unten"),
-                                ("Entfernen", self._remove, "Schritt entfernen")):
+        for text, slot, tip in (("↑", lambda: self._move(-1), "Move step up"),
+                                ("↓", lambda: self._move(+1), "Move step down"),
+                                ("Remove", self._remove, "Remove step")):
             b = QtWidgets.QToolButton()
             b.setText(text)
             b.setToolTip(tip)
@@ -144,6 +148,11 @@ class PipelinePanel(QtWidgets.QWidget):
                 continue
             sub = menu.addMenu(cat)
             for spec in cats[cat]:
+                if spec.name == "calibrate_x":     # needs a calibration from a fit: dedicated dialog
+                    a = sub.addAction(spec.title + "…")
+                    a.setToolTip(spec.description)
+                    a.triggered.connect(self.calibrationRequested.emit)
+                    continue
                 a = sub.addAction(spec.title)
                 a.setToolTip(spec.description)
                 a.triggered.connect(lambda _=False, n=spec.name: self.add_step(n))
@@ -155,9 +164,9 @@ class PipelinePanel(QtWidgets.QWidget):
         run = self.state.run(ds) if ds else None
         self.list.blockSignals(True)
         self.list.clear()
-        raw = QtWidgets.QListWidgetItem("● Rohdaten / Ergebnis")
+        raw = QtWidgets.QListWidgetItem("● Raw data / result")
         raw.setData(QtCore.Qt.UserRole, None)
-        raw.setToolTip("Ohne gewählten Schritt: verarbeitete Daten mit Fit")
+        raw.setToolTip("No step selected: processed data with fit")
         self.list.addItem(raw)
         current_item = raw
         if ds is not None:
@@ -194,7 +203,7 @@ class PipelinePanel(QtWidgets.QWidget):
             return
         on = it.checkState() == QtCore.Qt.Checked
         self.state.edit("pipeline", lambda p: p.set_enabled(sid, on),
-                        ("Aktivieren: " if on else "Deaktivieren: ") + it.text())
+                        ("Enable: " if on else "Disable: ") + it.text())
 
     # ------------------------------------------------------------------ editing
     def add_step(self, op):
@@ -208,7 +217,7 @@ class PipelinePanel(QtWidgets.QWidget):
 
         def mut(p):
             return p.add(op, params, index=idx).id
-        step_id = self.state.edit("pipeline", mut, "Schritt hinzufügen: " + op)
+        step_id = self.state.edit("pipeline", mut, "Add step: " + op)
         if step_id:
             self.state.select_step(step_id)
             self.refresh()
@@ -236,12 +245,12 @@ class PipelinePanel(QtWidgets.QWidget):
         i = ds.pipeline.index(sid)
         j = min(max(i + d, 0), len(ds.pipeline) - 1)
         if i != j:
-            self.state.edit("pipeline", lambda p: p.move(sid, j), "Schritt verschieben")
+            self.state.edit("pipeline", lambda p: p.move(sid, j), "Move step")
 
     def _remove(self):
         sid = self.state.selected_step
         if sid is not None:
-            self.state.edit("pipeline", lambda p: p.remove(sid), "Schritt entfernen")
+            self.state.edit("pipeline", lambda p: p.remove(sid), "Remove step")
 
     # ------------------------------------------------------------------ form
     def _hint_fn(self, step, run):
@@ -252,10 +261,10 @@ class PipelinePanel(QtWidgets.QWidget):
 
         def hint(params):
             if step.op == "baseline_snip":
-                return f"Halbfenster ≈ {params['max_half_window'] * dx:.4g} x-Einheiten"
+                return f"Half-window ≈ {params['max_half_window'] * dx:.4g} x units"
             pts = whittaker_cutoff_points(params["lam"], params.get("diff_order", 2))
-            return (f"Strukturen mit Periode ≳ {pts:.3g} Punkten (≈ {pts * dx:.4g} x-Einheiten) bleiben in der "
-                    "Baseline; λ hängt von der Punktdichte ab und ist nicht zwischen Spektren übertragbar.")
+            return (f"Structures with a period ≳ {pts:.3g} points (≈ {pts * dx:.4g} x units) remain in the "
+                    "baseline; λ depends on the point density and is not transferable between spectra.")
         return hint
 
     def _show_step(self, ds, run):
@@ -269,9 +278,9 @@ class PipelinePanel(QtWidgets.QWidget):
         if step is None:
             self.form = None
             self._form_step = None
-            lab = QtWidgets.QLabel("Schritt auswählen oder mit „+ Schritt“ hinzufügen.\n\n"
-                                   "Empfohlene Reihenfolge: Spikes → Einheiten → Baseline → (Normierung) → Fit. "
-                                   "Glätten nur zur Anzeige.")
+            lab = QtWidgets.QLabel("Select a step or add one with “+ Step”.\n\n"
+                                   "Recommended order: spikes → units → baseline → (normalization) → fit. "
+                                   "Smoothing is for display only.")
             lab.setWordWrap(True)
             lab.setObjectName("hint")
             self.scroll.setWidget(lab)
@@ -285,7 +294,7 @@ class PipelinePanel(QtWidgets.QWidget):
             msgs.append(f"<span style='color:{SEVERITY_COLOR['warning']}'>⚠ {w}</span>")
         if res is not None and not res.error:
             msgs.append(f"<span style='color:#5d6470'>{res.seconds * 1e3:.1f} ms"
-                        f"{' (Cache)' if res.cached else ''}</span>")
+                        f"{' (cached)' if res.cached else ''}</span>")
         self.status.setText("<br>".join(msgs))
         if self.form is not None and self._form_step == (step.id, step.op):
             self.form.set_params(step.params)
@@ -311,4 +320,4 @@ class PipelinePanel(QtWidgets.QWidget):
         step = ds.pipeline.get(step_id)
         dlg = RangesDialog(step.params.get(name, []), name, self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            self.state.edit("pipeline", lambda p: p.update(step_id, {name: dlg.ranges()}), f"Bereiche: {name}")
+            self.state.edit("pipeline", lambda p: p.update(step_id, {name: dlg.ranges()}), f"Ranges: {name}")

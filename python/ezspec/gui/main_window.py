@@ -17,49 +17,69 @@ from ..fit import bootstrap, fit, profile_ci
 from ..models import add_peak, find_peaks
 from ..ops.baseline import anchor_values
 from ..project import Dataset, Project
+from ..slices import grouped_by_slices, slice_curves, slice_variable
+from ..sweeps import display_order, display_order_masked
 from . import peak_edit
-from .dialogs import BootstrapDialog, CompareDialog, FigureDialog, ImportDialog, SeriesDialog
+from .dialogs import (BootstrapDialog, CalibrationDialog, CombineDialog, CompareDialog, FigureDialog,
+                      ImportDialog, SeriesDialog)
 from .model_panel import ModelPanel
 from .pipeline_panel import DatasetsPanel, PipelinePanel
 from .plot_view import PlotView
 from .results_panel import ResultsPanel
 from .state import AppState, start_task
 
-STATS_HELP = """<h3>Wie EZSpec Fit-Güte berichtet</h3>
+
+def _disp(s, *arrays):
+    """Arrays of spectrum ``s`` in drawing order: acquisition order for
+    back-and-forth (multi-sweep) data, so up and down ramps are drawn as
+    separate traces instead of a zigzag between them."""
+    o = display_order(s)
+    if o is None:
+        return arrays
+    return tuple(np.asarray(a)[o] for a in arrays)
+
+
+STATS_HELP = """<h3>How EZSpec reports goodness of fit</h3>
 <ul>
-<li><b>σ-Quelle</b> ist Pflichtangabe: bekannt (Spalte), geschätzt (DER_SNR / flacher Bereich), Poisson (σ² = Modell)
-oder unbekannt. Nur mit bekanntem σ ist χ² ein χ²; sonst werden RSS, s = √(RSS/ν) und RMSE angezeigt.</li>
-<li><b>Kovarianz</b>: bei bekanntem σ <i>absolut</i>. Skalieren mit √χ²_ν verdeckt sonst eine Fehlanpassung hinter
-größeren Fehlerbalken – es ist möglich, wird aber markiert. Bei unbekanntem σ ist Skalieren nötig.</li>
-<li><b>χ²_ν</b> wird mit seinem Erwartungsband 1 ± √(2/ν) gezeigt; auch bei korrektem Modell streut es.</li>
-<li><b>R²</b> ist nur deskriptiv. Für nichtlineare Modelle wählt es das wahre Modell schlecht aus
-(Spiess &amp; Neumeyer 2010); zum Modellvergleich ΔAICc/ΔBIC auf identischen Daten verwenden.</li>
-<li><b>Parameter am Bound</b>, <b>|ρ| &gt; 0,9</b> und rangdefiziente Jacobi-Matrizen werden markiert;
-Standardfehler sind dann nicht belastbar → Profil-CI oder Bootstrap.</li>
-<li><b>Geglättete oder interpolierte Daten</b> nicht fitten: korreliertes Rauschen lässt Fehler stark
-unterschätzen (O'Haver). Glätten in EZSpec dient standardmäßig nur der Anzeige.</li>
-<li><b>„Ein Peak mehr“</b> nicht per F-Test entscheiden (Randproblem, Protassov et al. 2002).</li>
-<li><b>Poisson-Daten</b> nicht mit σ = √y gewichten (verzerrt, Humphrey et al. 2009); Gewichtung „Poisson:
-σ² = Modell“ liefert den Poisson-Maximum-Likelihood-Schätzer.</li>
-<li>Die numerische Genauigkeit der Fit-Engine ist gegen alle 27 NIST-StRD-Probleme geprüft
-(≥ 7 Stellen in den Parametern).</li>
+<li>The <b>σ source</b> is mandatory: known (column), estimated (DER_SNR / flat region), Poisson (σ² = model)
+or unknown. χ² is a true χ² only when σ is known; otherwise RSS, s = √(RSS/ν) and RMSE are shown.</li>
+<li><b>Covariance</b>: <i>absolute</i> when σ is known. Scaling by √χ²_ν would otherwise hide a misfit behind
+larger error bars – it is possible, but flagged. With unknown σ, scaling is required.</li>
+<li><b>χ²_ν</b> is shown together with its expected range 1 ± √(2/ν); it scatters even when the model is correct.</li>
+<li><b>R²</b> is descriptive only. For nonlinear models it is a poor criterion for selecting the true model
+(Spiess &amp; Neumeyer 2010); for model comparison use ΔAICc/ΔBIC on identical data.</li>
+<li><b>Parameters at a bound</b>, <b>|ρ| &gt; 0.9</b> and rank-deficient Jacobians are flagged;
+standard errors are then unreliable → use profile CI or bootstrap.</li>
+<li>Do not fit <b>smoothed or interpolated data</b>: correlated noise leads to severely underestimated
+errors (O'Haver). By default, smoothing in EZSpec is for display only.</li>
+<li>Do not decide on <b>“one more peak”</b> with an F-test (boundary problem, Protassov et al. 2002).</li>
+<li>Do not weight <b>Poisson data</b> with σ = √y (biased, Humphrey et al. 2009); the weighting “Poisson:
+σ² = model” yields the Poisson maximum-likelihood estimator.</li>
+<li>The numerical accuracy of the fit engine is verified against all 27 NIST StRD problems
+(≥ 7 significant digits in the parameters).</li>
 </ul>"""
 
 
-QUICKSTART = """<h3>Kurzanleitung</h3>
+QUICKSTART = """<h3>Quick start</h3>
 <ol>
-<li><b>Daten</b>: Importieren (Text/CSV, JCAMP-DX) oder Datei ins Fenster ziehen. Beispiel: Datei → Beispieldaten.</li>
-<li><b>Verarbeitung</b>: „+ Schritt“. Gewählter Schritt zeigt Eingang und Ergebnis; Parameter wirken live.
-Werkzeuge im Plot (Tasten 1–4): Navigieren · Anker (Klick setzen, ziehen, Rechtsklick löschen, Shift = frei) ·
-Bereich (Masken, Pflichtbereiche, Rausch-/Fitbereich) · Peak.</li>
-<li><b>σ</b>: σ-Spalte importieren oder „Rauschen schätzen → σ“ – sonst gilt σ als unbekannt (kein χ²).</li>
-<li><b>Modell</b>: Werkzeug Peak (Klick = neuer Peak; Marker ziehen = Lage/Höhe/Breite), „Peaks finden“,
-„+ Komponente“ (Untergrund, klassische Funktion, eigene Formel). Tabelle: Start, Grenzen, frei, Ausdruck.</li>
-<li><b>Fit</b>: Strg+R. Ergebnis-Panel: Statistik, Warnungen, abgeleitete Größen, Korrelationen, Residuen.</li>
-<li><b>Vertiefen</b>: Profil-CI, Bootstrap, MCMC, Baseline-Systematik, Varianten vergleichen, Serie/global (Strg+G).</li>
-<li><b>Export</b>: Abbildung (Strg+E), Tabellen, Python-Skript (reproduziert alles aus den Rohdaten).</li>
+<li><b>Data</b>: Import (text/CSV, JCAMP-DX) or drag a file onto the window. Example: File → Example data.</li>
+<li><b>Processing</b>: “+ Step”. The selected step shows its input and output; parameter changes apply live.
+Plot tools (keys 1–4): Navigate · Anchor (click to set, drag to move, right-click to delete, Shift = free) ·
+Range (masks, forced regions, noise/fit range) · Peak.</li>
+<li><b>σ</b>: import a σ column or add “Estimate noise → σ” – otherwise σ is treated as unknown (no χ²).</li>
+<li><b>Model</b>: Peak tool (click = new peak; drag markers = position/height/width), “Find peaks”,
+“+ Component” (background, classic function, custom formula). Table: start value, bounds, vary, expression.</li>
+<li><b>Fit</b>: Ctrl+R. Results panel: statistics, warnings, derived quantities, correlations, residuals.</li>
+<li><b>Combine</b>: Ctrl+K – ratio, difference or arbitrary x/y formulas from several datasets
+(σ is propagated, alignment is checked automatically).</li>
+<li><b>Up/down sweeps</b> (e.g. a current ramp): displayed in acquisition order; “+ Step → Range →
+Select sweeps / Average sweeps” separates rising and falling ramps.</li>
+<li><b>Calibration</b> (e.g. λ(I, T)): on import, select column T under “Extra variables”,
+“+ Component → Surface f(x, v)”, fit, then Analysis → “Apply fit as x calibration”.</li>
+<li><b>Go further</b>: profile CI, bootstrap, MCMC, baseline systematics, compare variants, series/global fit (Ctrl+G).</li>
+<li><b>Export</b>: figure (Ctrl+E), tables, Python script (reproduces everything from the raw data).</li>
 </ol>
-<p>Alles ist rückgängig machbar (Strg+Z); der Verlauf steht im Dock „Verlauf“.</p>"""
+<p>Every action can be undone (Ctrl+Z); the history is shown in the “History” dock.</p>"""
 
 
 def estimate_fwhm(x, y, x0, base, height):
@@ -95,13 +115,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline_panel = PipelinePanel(self.state)
         self.model_panel = ModelPanel(self.state)
         self.results_panel = ResultsPanel(self.state)
-        self.d_data = self._dock("Daten", self.datasets_panel, QtCore.Qt.LeftDockWidgetArea)
-        self.d_pipe = self._dock("Verarbeitung", self.pipeline_panel, QtCore.Qt.LeftDockWidgetArea)
-        self.d_model = self._dock("Modell und Fit", self.model_panel, QtCore.Qt.RightDockWidgetArea)
-        self.d_res = self._dock("Ergebnis", self.results_panel, QtCore.Qt.RightDockWidgetArea)
+        self.d_data = self._dock("Data", self.datasets_panel, QtCore.Qt.LeftDockWidgetArea)
+        self.d_pipe = self._dock("Processing", self.pipeline_panel, QtCore.Qt.LeftDockWidgetArea)
+        self.d_model = self._dock("Model and fit", self.model_panel, QtCore.Qt.RightDockWidgetArea)
+        self.d_res = self._dock("Results", self.results_panel, QtCore.Qt.RightDockWidgetArea)
         undo_view = QtWidgets.QUndoView(self.state.undo)
-        undo_view.setEmptyLabel("<Projektbeginn>")
-        self.d_hist = self._dock("Verlauf", undo_view, QtCore.Qt.LeftDockWidgetArea)
+        undo_view.setEmptyLabel("<Project start>")
+        self.d_hist = self._dock("History", undo_view, QtCore.Qt.LeftDockWidgetArea)
         self.tabifyDockWidget(self.d_pipe, self.d_hist)
         self.d_pipe.raise_()
         self.resizeDocks([self.d_data, self.d_pipe], [140, 520], QtCore.Qt.Vertical)
@@ -144,51 +164,54 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_menus(self):
         mb = self.menuBar()
-        f = mb.addMenu("&Datei")
-        f.addAction("Neues Projekt", self.new_project, QtGui.QKeySequence.New)
-        f.addAction("Projekt öffnen…", self.open_project, QtGui.QKeySequence.Open)
-        f.addAction("Speichern", self.save_project, QtGui.QKeySequence.Save)
-        f.addAction("Speichern unter…", lambda: self.save_project(True), QtGui.QKeySequence.SaveAs)
+        f = mb.addMenu("&File")
+        f.addAction("New project", self.new_project, QtGui.QKeySequence.New)
+        f.addAction("Open project…", self.open_project, QtGui.QKeySequence.Open)
+        f.addAction("Save", self.save_project, QtGui.QKeySequence.Save)
+        f.addAction("Save as…", lambda: self.save_project(True), QtGui.QKeySequence.SaveAs)
         f.addSeparator()
-        f.addAction("Daten importieren…", self.import_data, QtGui.QKeySequence("Ctrl+I"))
-        ex = f.addMenu("Beispieldaten")
-        ex.addAction("Raman-Spektrum mit Fluoreszenzuntergrund", lambda: self.load_example("raman"))
-        ex.addAction("Abklingkurve (Poisson-Zählraten)", lambda: self.load_example("decay"))
+        f.addAction("Import data…", self.import_data, QtGui.QKeySequence("Ctrl+I"))
+        ex = f.addMenu("Example data")
+        ex.addAction("Raman spectrum with fluorescence background", lambda: self.load_example("raman"))
+        ex.addAction("Decay curve (Poisson counts)", lambda: self.load_example("decay"))
         f.addSeparator()
-        f.addAction("Vorlage speichern…", self.save_template)
-        f.addAction("Vorlage anwenden…", self.apply_template)
+        f.addAction("Save template…", self.save_template)
+        f.addAction("Apply template…", self.apply_template)
         f.addSeparator()
-        exp = f.addMenu("Exportieren")
-        exp.addAction("Abbildung…", self.figure_dialog, QtGui.QKeySequence("Ctrl+E"))
-        exp.addAction("Fit-Ergebnisse (CSV/JSON/Bericht)…", self.export_results)
-        exp.addAction("Python-Skript (reproduzierbar)…", self.export_script)
+        exp = f.addMenu("Export")
+        exp.addAction("Figure…", self.figure_dialog, QtGui.QKeySequence("Ctrl+E"))
+        exp.addAction("Fit results (CSV/JSON/report)…", self.export_results)
+        exp.addAction("Python script (reproducible)…", self.export_script)
         f.addSeparator()
-        f.addAction("Beenden", self.close, QtGui.QKeySequence.Quit)
+        f.addAction("Quit", self.close, QtGui.QKeySequence.Quit)
 
-        e = mb.addMenu("&Bearbeiten")
-        undo = self.state.undo.createUndoAction(self, "Rückgängig")
+        e = mb.addMenu("&Edit")
+        undo = self.state.undo.createUndoAction(self, "Undo")
         undo.setShortcut(QtGui.QKeySequence.Undo)
-        redo = self.state.undo.createRedoAction(self, "Wiederholen")
+        redo = self.state.undo.createRedoAction(self, "Redo")
         redo.setShortcuts([QtGui.QKeySequence.Redo, QtGui.QKeySequence("Ctrl+Y")])
         e.addAction(undo)
         e.addAction(redo)
 
-        a = mb.addMenu("&Analyse")
-        a.addAction("Fit ausführen", self.run_fit, QtGui.QKeySequence("Ctrl+R"))
-        a.addAction("Peaks automatisch finden", self.auto_peaks)
-        a.addAction("Profil-Konfidenzintervalle", self.run_profile)
+        a = mb.addMenu("&Analysis")
+        a.addAction("Run fit", self.run_fit, QtGui.QKeySequence("Ctrl+R"))
+        a.addAction("Find peaks automatically", self.auto_peaks)
+        a.addAction("Profile confidence intervals", self.run_profile)
         a.addAction("Bootstrap…", self.run_bootstrap)
-        a.addAction("Baseline-Systematik (λ/Fenster variieren)", self.run_systematics)
+        a.addAction("Baseline systematics (vary λ/window)", self.run_systematics)
         a.addAction("MCMC-Posterior (emcee)…", self.run_mcmc)
         a.addSeparator()
-        a.addAction("Serie / globaler Fit…", self.series_dialog, QtGui.QKeySequence("Ctrl+G"))
+        a.addAction("Combine datasets (ratio, difference, x/y formulas)…", self.combine_dialog,
+                    QtGui.QKeySequence("Ctrl+K"))
+        a.addAction("Series / global fit…", self.series_dialog, QtGui.QKeySequence("Ctrl+G"))
+        a.addAction("Apply fit as x calibration (e.g. λ(I, T))…", lambda: self.calibration_dialog())
         a.addSeparator()
-        a.addAction("Fit als Variante merken", self.remember_variant)
-        a.addAction("Modelle vergleichen…", self.compare_variants)
+        a.addAction("Remember fit as variant", self.remember_variant)
+        a.addAction("Compare models…", self.compare_variants)
         a.addSeparator()
-        bk = a.addMenu("Numerik-Kern")
+        bk = a.addMenu("Numerics backend")
         grp = QtGui.QActionGroup(self)
-        for key, title in (("rust", "Rust (schnell)"), ("python", "Python/SciPy (Referenz)")):
+        for key, title in (("rust", "Rust (fast)"), ("python", "Python/SciPy (reference)")):
             act = QtGui.QAction(title, self, checkable=True)
             act.setChecked(backend_name() == key)
             act.setEnabled(key == "python" or HAVE_RUST)
@@ -196,20 +219,20 @@ class MainWindow(QtWidgets.QMainWindow):
             grp.addAction(act)
             bk.addAction(act)
 
-        v = mb.addMenu("&Ansicht")
+        v = mb.addMenu("&View")
         for d in (self.d_data, self.d_pipe, self.d_model, self.d_res, self.d_hist):
             v.addAction(d.toggleViewAction())
         v.addSeparator()
         for i, key in enumerate(("navigate", "anchor", "region", "peak"), 1):
-            act = v.addAction(f"Werkzeug: {self.plot.mode_actions[key].text()}",
+            act = v.addAction(f"Tool: {self.plot.mode_actions[key].text()}",
                               lambda k=key: self.plot.set_mode(k))
             act.setShortcut(QtGui.QKeySequence(str(i)))
 
-        h = mb.addMenu("&Hilfe")
-        h.addAction("Kurzanleitung", lambda: QtWidgets.QMessageBox.information(self, "Kurzanleitung", QUICKSTART),
+        h = mb.addMenu("&Help")
+        h.addAction("Quick start", lambda: QtWidgets.QMessageBox.information(self, "Quick start", QUICKSTART),
                     QtGui.QKeySequence.HelpContents)
-        h.addAction("Statistik-Hinweise", lambda: QtWidgets.QMessageBox.information(self, "Statistik", STATS_HELP))
-        h.addAction("Über EZSpec", self.about)
+        h.addAction("Statistics notes", lambda: QtWidgets.QMessageBox.information(self, "Statistics notes", STATS_HELP))
+        h.addAction("About EZSpec", self.about)
 
     def _wire(self):
         st = self.state
@@ -224,6 +247,8 @@ class MainWindow(QtWidgets.QMainWindow):
         st.projectChanged.connect(self._update_title)
         self.datasets_panel.importRequested.connect(self.import_data)
         self.datasets_panel.exampleRequested.connect(lambda: self.load_example("raman"))
+        self.datasets_panel.combineRequested.connect(self.combine_dialog)
+        self.pipeline_panel.calibrationRequested.connect(lambda: self.calibration_dialog(from_pipeline=True))
         self.pipeline_panel.rangeTargetChanged.connect(self.plot.set_range_target)
         self.model_panel.fitRequested.connect(self.run_fit)
         self.model_panel.autoPeaksRequested.connect(self.auto_peaks)
@@ -279,24 +304,25 @@ class MainWindow(QtWidgets.QMainWindow):
             kw = {"x_label": xl, "y_label": inp.y_label}
             anchors_eff = None
             if out is None:
-                self.plot.set_scene(data=(inp.x, inp.y), **kw)
+                self.plot.set_scene(data=_disp(inp, inp.x, inp.y), **kw)
             elif step.op.startswith("baseline_"):
                 corrected = (out.x, out.y) if step.params.get("subtract", True) else (out.x, out.y - out.aux["baseline"])
-                self.plot.set_scene(data=(inp.x, inp.y), baseline=(out.x, out.aux["baseline"]),
-                                    residuals=(corrected[0], corrected[1], False), **kw)
-                self.plot.p_res.setLabel("left", "korrigiert")
+                self.plot.set_scene(data=_disp(inp, inp.x, inp.y), baseline=_disp(out, out.x, out.aux["baseline"]),
+                                    residuals=(*_disp(out, *corrected), False), **kw)
+                self.plot.p_res.setLabel("left", "corrected")
                 if step.op == "baseline_anchors":
                     try:
                         anchors_eff = anchor_values(inp, step.params.get("anchors", []), step.params.get("window", 3))
                     except Exception:  # noqa: BLE001
                         anchors_eff = None
             elif "smoothed" in out.aux and "smoothed" not in inp.aux:
-                self.plot.set_scene(data=(out.x, out.y), smoothed=(out.x, out.aux["smoothed"]), **kw)
+                self.plot.set_scene(data=_disp(out, out.x, out.y), smoothed=_disp(out, out.x, out.aux["smoothed"]),
+                                    **kw)
             elif step.op == "estimate_noise" or step.op == "exclude":
                 excl = out.exclude if out.exclude is not None else np.zeros(out.n, bool)
-                self.plot.set_scene(data=(out.x, out.y), excluded=(out.x[excl], out.y[excl]), **kw)
+                self.plot.set_scene(data=_disp(out, out.x, out.y), excluded=(out.x[excl], out.y[excl]), **kw)
             else:
-                self.plot.set_scene(data=(out.x, out.y), input=(inp.x, inp.y), **kw)
+                self.plot.set_scene(data=_disp(out, out.x, out.y), input=_disp(inp, inp.x, inp.y), **kw)
             self.plot.set_tools(step=step, anchors_eff=anchors_eff)
             return
 
@@ -305,7 +331,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot.p_res.setLabel("left", "Res.")
         mask = s.fit_mask
         excluded = (s.x[~mask], s.y[~mask]) if (~mask).any() else None
-        smoothed = (s.x, s.aux["smoothed"]) if "smoothed" in s.aux else None
+        smoothed = _disp(s, s.x, s.aux["smoothed"]) if "smoothed" in s.aux else None
         fit_xy = comps = resid = preview = None
         current = self.state.fit_current(ds)
         r = ds.fit_result
@@ -316,16 +342,30 @@ class MainWindow(QtWidgets.QMainWindow):
                      if k.startswith("component_dense:")]
             if len(comps) < 2:
                 comps = []
-            resid = (r.x, r.normalized_residuals, r.stats.chi2 is not None)
+            rx, ry = r.x, r.normalized_residuals
+            o = display_order_masked(s, r.mask) if len(r.mask) == s.n else None
+            if o is not None:
+                rx, ry = rx[o], ry[o]
+            resid = (rx, ry, r.stats.chi2 is not None)
         if ds.model.components and (r is None or not current) and s.n > 1:
             try:
                 xd = np.linspace(s.x.min(), s.x.max(), 1500)
                 preview = (xd, ds.model.evaluate(xd, ds.model.initial_values()))
             except Exception:  # noqa: BLE001 - invalid model: no preview
                 preview = None
-        self.plot.set_scene(data=(s.x, s.y), excluded=excluded, smoothed=smoothed, fit=fit_xy,
+        # y(x, v) data such as a calibration surface: one group/curve per value of v
+        fit_model = r._internals.get("model") if r is not None else None
+        var = slice_variable(s, fit_model if fit_model is not None else ds.model)
+        slices = ()
+        if var is not None:
+            slices = slice_curves(s, fit_model, r.values if r is not None else None, var)
+            fit_xy, comps, preview = None, [], None
+            if resid is not None and len(r.mask) == s.n:
+                resid = (*grouped_by_slices(slices, r.mask, r.x, r.normalized_residuals), resid[2])
+        self.plot.set_scene(data=_disp(s, s.x, s.y), excluded=excluded, smoothed=smoothed, fit=fit_xy,
                             fit_stale=not current, components=comps or (), preview=preview, residuals=resid,
-                            x_label=xl, y_label=s.y_label)
+                            x_label=xl, y_label=s.y_label, scatter=s.meta.get("plot_style") == "scatter",
+                            slices=slices)
         handles = []
         vals = self._values_for_handles(ds)
         if vals is not None and ds.model.peaks:
@@ -340,22 +380,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.state.edit("pipeline", lambda p: p.update(sid, params), text)
 
     def _anchors_edited(self, anchors):
-        self._step_edit({"anchors": anchors}, "Anker bearbeiten")
+        self._step_edit({"anchors": anchors}, "Edit anchors")
 
     def _ranges_edited(self, param, lst):
-        self._step_edit({param: [[min(a, b), max(a, b)] for a, b in lst]}, f"Bereiche: {param}")
+        self._step_edit({param: [[min(a, b), max(a, b)] for a, b in lst]}, f"Ranges: {param}")
 
     def _range_edited(self, param, ab):
         a, b = ab
         lo = None if a is None or b is None else min(a, b)
         hi = None if a is None or b is None else max(a, b)
         if param == "crop":
-            self._step_edit({"xmin": lo, "xmax": hi}, "Bereich beschneiden")
+            self._step_edit({"xmin": lo, "xmax": hi}, "Crop range")
         elif param == "fit_range":
             self.state.edit("options", lambda o: setattr(o, "x_range", None if lo is None else [lo, hi]),
-                            "Fitbereich")
+                            "Fit range")
         else:
-            self._step_edit({param: [lo, hi]}, f"Bereich: {param}")
+            self._step_edit({param: [lo, hi]}, f"Range: {param}")
 
     def _peak_added(self, x, y):
         ds = self.state.current()
@@ -371,7 +411,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         h = y - base
         fw = estimate_fwhm(s.x, s.y, x, base, h)
-        self.state.edit("model", lambda m: add_peak(m, kind, x, h, fw), f"Peak bei {x:.5g}")
+        self.state.edit("model", lambda m: add_peak(m, kind, x, h, fw), f"Peak at {x:.5g}")
 
     def _peak_dragged(self, prefix, handle, x, y, final):
         ds = self.state.current()
@@ -402,21 +442,21 @@ class MainWindow(QtWidgets.QMainWindow):
             for k, val in new.items():
                 st = c.settings[k]
                 st.value = float(min(max(val, st.min), st.max))
-        self.state.edit("model", mut, f"Peak {prefix.rstrip('_')} verschieben")
+        self.state.edit("model", mut, f"Move peak {prefix.rstrip('_')}")
 
     # ================================================================ data / project
     def import_data(self, path=None):
         if not path:
             path, _ = QtWidgets.QFileDialog.getOpenFileName(
-                self, "Daten importieren", self.settings.value("last_dir", ""),
-                "Spektren (*.txt *.csv *.dat *.tsv *.xy *.asc *.prn *.jdx *.dx *.jcm);;Alle Dateien (*)")
+                self, "Import data", self.settings.value("last_dir", ""),
+                "Spectra (*.txt *.csv *.dat *.tsv *.xy *.asc *.prn *.jdx *.dx *.jcm);;All files (*)")
         if not path:
             return
         self.settings.setValue("last_dir", str(Path(path).parent))
         try:
             dlg = ImportDialog(path, self)
         except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Import", f"Datei kann nicht gelesen werden:\n{e}")
+            QtWidgets.QMessageBox.warning(self, "Import", f"Cannot read file:\n{e}")
             return
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
@@ -428,7 +468,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def load_example(self, which):
         from ..examples import decay_example, raman_example, to_csv_bytes
         s = raman_example() if which == "raman" else decay_example()
-        name = "beispiel_raman.csv" if which == "raman" else "beispiel_abklingkurve.csv"
+        name = "example_raman.csv" if which == "raman" else "example_decay.csv"
         ds = Dataset.from_bytes(to_csv_bytes(s), name)
         ds.name = s.meta["name"]
         if which == "raman":
@@ -440,11 +480,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ds = self.state.current()
         if ds is None:
             return
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Vorlage speichern", f"{ds.name}.ezspec-template.json",
-                                                        "EZSpec-Vorlage (*.json)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save template", f"{ds.name}.ezspec-template.json",
+                                                        "EZSpec template (*.json)")
         if path:
             save_template(ds, path)
-            self.statusBar().showMessage(f"Vorlage gespeichert: {path}", 4000)
+            self.statusBar().showMessage(f"Template saved: {path}", 4000)
 
     def apply_template(self, path=None):
         from ..project import load_template
@@ -452,24 +492,24 @@ class MainWindow(QtWidgets.QMainWindow):
         if ds is None:
             return
         if not path:
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Vorlage anwenden", "", "EZSpec-Vorlage (*.json)")
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Apply template", "", "EZSpec template (*.json)")
         if not path:
             return
         try:
             t = load_template(path)
         except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Vorlage", str(e))
+            QtWidgets.QMessageBox.warning(self, "Template", str(e))
             return
         from ..fit import FitOptions
         from ..models import Model
         from ..pipeline import Pipeline
-        self.state.undo.beginMacro("Vorlage anwenden")
+        self.state.undo.beginMacro("Apply template")
         self.state.edit("pipeline", lambda p: p.steps.__setitem__(slice(None), Pipeline.from_dict(t["pipeline"]).steps),
-                        "Pipeline aus Vorlage")
+                        "Pipeline from template")
         self.state.edit("model", lambda m: m.components.__setitem__(slice(None), Model.from_dict(t["model"]).components),
-                        "Modell aus Vorlage")
+                        "Model from template")
         self.state.edit("options", lambda o: o.__dict__.update(FitOptions.from_dict(t["fit_options"]).to_dict()),
-                        "Fit-Optionen aus Vorlage")
+                        "Fit options from template")
         self.state.undo.endMacro()
 
     def new_project(self):
@@ -482,14 +522,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._confirm_discard():
             return
         if not path:
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Projekt öffnen", self.settings.value("last_dir", ""),
-                                                            "EZSpec-Projekt (*.ezspec)")
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open project", self.settings.value("last_dir", ""),
+                                                            "EZSpec project (*.ezspec)")
         if not path:
             return
         try:
             proj = Project.load(path)
         except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Öffnen", str(e))
+            QtWidgets.QMessageBox.warning(self, "Open", str(e))
             return
         self.state.new_project(proj)
         self._update_title()
@@ -503,15 +543,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     ds.run_fit()
                     self.state.fitChanged.emit(ds.id)
                 except Exception as e:  # noqa: BLE001
-                    self.statusBar().showMessage(f"Fit von {ds.name} nicht reproduzierbar: {e}", 8000)
+                    self.statusBar().showMessage(f"Fit of {ds.name} could not be reproduced: {e}", 8000)
 
     def save_project(self, save_as=False):
         proj = self.state.project
         path = proj.path
         if save_as or path is None:
-            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Projekt speichern",
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save project",
                                                             str(Path(self.settings.value("last_dir", "")) /
-                                                                "projekt.ezspec"), "EZSpec-Projekt (*.ezspec)")
+                                                                "project.ezspec"), "EZSpec project (*.ezspec)")
             if not path:
                 return False
             if not path.endswith(".ezspec"):
@@ -519,17 +559,17 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             proj.save(path)
         except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Speichern", str(e))
+            QtWidgets.QMessageBox.warning(self, "Save", str(e))
             return False
         self.state.undo.setClean()
         self._update_title()
-        self.statusBar().showMessage(f"Gespeichert: {path}", 4000)
+        self.statusBar().showMessage(f"Saved: {path}", 4000)
         return True
 
     def _confirm_discard(self):
         if self.state.undo.isClean() or not self.state.project.datasets:
             return True
-        r = QtWidgets.QMessageBox.question(self, "Ungespeicherte Änderungen", "Änderungen speichern?",
+        r = QtWidgets.QMessageBox.question(self, "Unsaved changes", "Save changes?",
                                            QtWidgets.QMessageBox.Save | QtWidgets.QMessageBox.Discard |
                                            QtWidgets.QMessageBox.Cancel)
         if r == QtWidgets.QMessageBox.Save:
@@ -538,7 +578,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_title(self):
         p = self.state.project.path
-        name = Path(p).name if p else "Unbenannt"
+        name = Path(p).name if p else "Untitled"
         try:
             dirty = "" if self.state.undo.isClean() else " *"
         except RuntimeError:  # undo stack already destroyed during shutdown
@@ -556,7 +596,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def run_fit(self):
         ds = self.state.current()
         if ds is None or not ds.model.components:
-            self.statusBar().showMessage("Zuerst Modellkomponenten hinzufügen (z. B. Werkzeug 'Peak').", 5000)
+            self.statusBar().showMessage("Add model components first (e.g. with the 'Peak' tool).", 5000)
             return
         if self._task is not None:
             self._live_timer.start()
@@ -564,12 +604,12 @@ class MainWindow(QtWidgets.QMainWindow):
         s = self.state.run(ds).final
         model = ds.model.copy()
         options = type(ds.fit_options).from_dict(ds.fit_options.to_dict())
-        self._busy(True, "Fit läuft …")
+        self._busy(True, "Fitting…")
         ds_id = ds.id
 
         def done(result):
             self._task = None
-            self._busy(False, "Fit fertig.")
+            self._busy(False, "Fit done.")
             try:
                 d = self.state.project.get(ds_id)
             except KeyError:
@@ -580,7 +620,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def failed(msg):
             self._task = None
-            self._busy(False, "Fit fehlgeschlagen.")
+            self._busy(False, "Fit failed.")
             QtWidgets.QMessageBox.warning(self, "Fit", msg.split("\n\n")[0])
 
         self._task = start_task(fit, done, failed, None, s, model, options)
@@ -593,7 +633,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m = s.fit_mask
         guesses = find_peaks(s.x[m], s.y[m])
         if not guesses:
-            self.statusBar().showMessage("Keine Peaks über 5·Rauschen gefunden.", 5000)
+            self.statusBar().showMessage("No peaks found above 5 × noise.", 5000)
             return
         kind = self.model_panel.peak_kind.currentData()
         existing = []
@@ -611,13 +651,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 add_peak(model, kind, g.center, g.height, g.fwhm)
                 n += 1
             return n
-        n = self.state.edit("model", mut, "Peaks automatisch")
-        self.statusBar().showMessage(f"{n or 0} Peak(s) hinzugefügt.", 4000)
+        n = self.state.edit("model", mut, "Find peaks automatically")
+        self.statusBar().showMessage(f"{n or 0} peak(s) added.", 4000)
 
     def _require_fit(self):
         ds = self.state.current()
         if ds is None or ds.fit_result is None:
-            QtWidgets.QMessageBox.information(self, "Analyse", "Zuerst einen Fit ausführen.")
+            QtWidgets.QMessageBox.information(self, "Analysis", "Run a fit first.")
             return None
         return ds
 
@@ -625,18 +665,18 @@ class MainWindow(QtWidgets.QMainWindow):
         ds = self._require_fit()
         if ds is None or self._task is not None:
             return
-        self._busy(True, "Profil-Konfidenzintervalle …")
+        self._busy(True, "Profile confidence intervals…")
 
         def done(_res):
             self._task = None
-            self._busy(False, "Profil-CI fertig.")
+            self._busy(False, "Profile CI done.")
             self.state.fitChanged.emit(ds.id)
             self.results_panel.tabs.setCurrentIndex(4)
 
         def failed(msg):
             self._task = None
             self._busy(False)
-            QtWidgets.QMessageBox.warning(self, "Profil-CI", msg.split("\n\n")[0])
+            QtWidgets.QMessageBox.warning(self, "Profile CI", msg.split("\n\n")[0])
         self._task = start_task(profile_ci, done, failed, None, ds.fit_result)
 
     def run_bootstrap(self):
@@ -646,11 +686,11 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg = BootstrapDialog(self)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        self._busy(True, "Bootstrap …")
+        self._busy(True, "Bootstrap…")
 
         def done(_res):
             self._task = None
-            self._busy(False, "Bootstrap fertig.")
+            self._busy(False, "Bootstrap done.")
             self.state.fitChanged.emit(ds.id)
             self.results_panel.tabs.setCurrentIndex(4)
 
@@ -661,9 +701,50 @@ class MainWindow(QtWidgets.QMainWindow):
         self._task = start_task(bootstrap, done, failed, None, ds.fit_result, dlg.n.value(),
                                 dlg.kind.currentData(), dlg.seed.value())
 
+    def combine_dialog(self):
+        if not self.state.project.datasets:
+            QtWidgets.QMessageBox.information(self, "Combine", "Import data first.")
+            return
+        CombineDialog(self.state, self).exec()
+
+    def calibration_dialog(self, from_pipeline=False):
+        st = self.state
+        cur = st.current()
+        sources = [d for d in st.project.datasets if d.fit_result is not None and st.fit_current(d)]
+        if from_pipeline:
+            sources = [d for d in sources if cur is None or d.id != cur.id]
+        if not sources:
+            QtWidgets.QMessageBox.information(
+                self, "Calibration",
+                "No calibration fit available: select the calibration data (e.g. λ vs. I, with column T as an "
+                "additional variable), add + Component → Surface f(x, v) → Plane, fit – then open this dialog.")
+            return
+        if len(st.project.datasets) < 2:
+            QtWidgets.QMessageBox.information(self, "Calibration", "No target datasets – import the measurement data.")
+            return
+        source = next((d for d in sources if cur is not None and d.id == cur.id), sources[0])
+        try:
+            dlg = CalibrationDialog(st, sources, source=source, target=cur if from_pipeline else None, parent=self)
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(self, "Calibration", str(e))
+            return
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+        self.apply_calibration(dlg.params, dlg.targets)
+
+    def apply_calibration(self, params, target_ids):
+        self.state.undo.beginMacro("Apply x calibration")
+        try:
+            for tid in target_ids:
+                t = self.state.project.get(tid)
+                self.state.edit("pipeline", lambda p: p.add("calibrate_x", params), "Calibrate x", ds=t)
+        finally:
+            self.state.undo.endMacro()
+        self.schedule_refresh()
+
     def series_dialog(self):
         if len(self.state.project.datasets) < 2:
-            QtWidgets.QMessageBox.information(self, "Serie", "Mindestens zwei Datensätze importieren.")
+            QtWidgets.QMessageBox.information(self, "Series", "Import at least two datasets.")
             return
         SeriesDialog(self.state, self).exec()
 
@@ -672,12 +753,12 @@ class MainWindow(QtWidgets.QMainWindow):
         ds = self._require_fit()
         if ds is None or self._task is not None:
             return
-        self._busy(True, "Baseline-Systematik: Varianten werden gefittet …")
+        self._busy(True, "Baseline systematics: fitting variants…")
         result = ds.fit_result
 
         def done(res):
             self._task = None
-            self._busy(False, "Baseline-Systematik fertig.")
+            self._busy(False, "Baseline systematics done.")
             result.extra["baseline_systematics"] = res
             self.state.fitChanged.emit(ds.id)
             self.results_panel.tabs.setCurrentIndex(4)
@@ -685,7 +766,7 @@ class MainWindow(QtWidgets.QMainWindow):
         def failed(msg):
             self._task = None
             self._busy(False)
-            QtWidgets.QMessageBox.warning(self, "Baseline-Systematik", msg.split("\n\n")[0])
+            QtWidgets.QMessageBox.warning(self, "Baseline systematics", msg.split("\n\n")[0])
         self._task = start_task(baseline_systematics, done, failed, None, ds.raw, ds.pipeline.copy(),
                                 ds.model.copy(), type(ds.fit_options).from_dict(ds.fit_options.to_dict()))
 
@@ -694,15 +775,15 @@ class MainWindow(QtWidgets.QMainWindow):
         ds = self._require_fit()
         if ds is None or self._task is not None:
             return
-        steps, ok = QtWidgets.QInputDialog.getInt(self, "MCMC", "Schritte pro Walker:", 3000, 200, 200000, 500)
+        steps, ok = QtWidgets.QInputDialog.getInt(self, "MCMC", "Steps per walker:", 3000, 200, 200000, 500)
         if not ok:
             return
-        self._busy(True, "MCMC läuft …")
+        self._busy(True, "MCMC running…")
         result = ds.fit_result
 
         def done(_res):
             self._task = None
-            self._busy(False, "MCMC fertig.")
+            self._busy(False, "MCMC done.")
             self.state.fitChanged.emit(ds.id)
             self.results_panel.tabs.setCurrentIndex(4)
 
@@ -717,20 +798,21 @@ class MainWindow(QtWidgets.QMainWindow):
         if ds is None:
             return
         variants = self.state.variants.setdefault(ds.id, {})
-        default = " + ".join(c.type.title if c.kind != "formula" else "Formel" for c in ds.model.components)
-        name, ok = QtWidgets.QInputDialog.getText(self, "Variante merken", "Name:", text=default)
+        default = " + ".join(c.type.title if c.kind != "formula" else "Formula" for c in ds.model.components)
+        name, ok = QtWidgets.QInputDialog.getText(self, "Remember variant", "Name:", text=default)
         if ok and name:
             variants[name] = ds.fit_result
-            self.statusBar().showMessage(f"Variante „{name}“ gespeichert ({len(variants)} insgesamt).", 4000)
+            self.statusBar().showMessage(f"Variant “{name}” saved ({len(variants)} in total).", 4000)
 
     def compare_variants(self):
         ds = self.state.current()
         variants = dict(self.state.variants.get(ds.id, {})) if ds else {}
         if ds is not None and ds.fit_result is not None and ds.fit_result not in variants.values():
-            variants["aktueller Fit"] = ds.fit_result
+            variants["current fit"] = ds.fit_result
         if len(variants) < 2:
-            QtWidgets.QMessageBox.information(self, "Vergleich", "Mindestens zwei Fits nötig: Fit ausführen, "
-                                                                 "„Variante merken“, Modell ändern, erneut fitten.")
+            QtWidgets.QMessageBox.information(self, "Comparison", "At least two fits are needed: run a fit, "
+                                                                 "“Remember fit as variant”, change the model, "
+                                                                 "fit again.")
             return
         CompareDialog(variants, self).exec()
 
@@ -744,7 +826,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_backend_label(self):
         name = backend_name()
-        self.backend_label.setText("Kern: Rust" if name == "rust" else "Kern: Python (Referenz)")
+        self.backend_label.setText("Backend: Rust" if name == "rust" else "Backend: Python (reference)")
 
     # ================================================================ export
     def figure_dialog(self):
@@ -755,25 +837,25 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg = FigureDialog(ds, self.state.project.figures.get(key), self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             self.state.project.figures[key] = dlg.spec
-            self.statusBar().showMessage("Abbildung im Projekt gespeichert.", 3000)
+            self.statusBar().showMessage("Figure saved in project.", 3000)
 
     def export_results(self):
         ds = self._require_fit()
         if ds is None:
             return
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Ergebnisse exportieren (Dateistamm)",
-                                                        f"{ds.name}_fit", "Alle (*)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export results (file stem)",
+                                                        f"{ds.name}_fit", "All files (*)")
         if not path:
             return
         files = write_all(ds.fit_result, path)
-        self.statusBar().showMessage(f"{len(files)} Dateien geschrieben.", 4000)
+        self.statusBar().showMessage(f"{len(files)} files written.", 4000)
 
     def export_script(self):
         ds = self.state.current()
         if ds is None:
             return
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Python-Skript exportieren",
-                                                        f"{Path(ds.name).stem}_analyse.py", "Python (*.py)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export Python script",
+                                                        f"{Path(ds.name).stem}_analysis.py", "Python (*.py)")
         if not path:
             return
         path = Path(path)
@@ -781,9 +863,9 @@ class MainWindow(QtWidgets.QMainWindow):
         raw_path = src.get("path")
         if not raw_path or not Path(raw_path).exists():
             if ds.raw_bytes is None:
-                QtWidgets.QMessageBox.warning(self, "Skript", "Keine Rohdatendatei verfügbar.")
+                QtWidgets.QMessageBox.warning(self, "Script", "No raw data file available.")
                 return
-            raw_path = path.with_name(path.stem + "_rohdaten" + (ds.raw_ext or ".csv"))
+            raw_path = path.with_name(path.stem + "_rawdata" + (ds.raw_ext or ".csv"))
             raw_path.write_bytes(ds.raw_bytes)
         spec = self.state.project.figures.get(ds.id)
         if spec is None:
@@ -792,18 +874,18 @@ class MainWindow(QtWidgets.QMainWindow):
             spec = default_spec(ds.id, curves, U.AXIS_LABELS.get(run.final.x_unit, run.final.x_label),
                                 run.final.y_label)
         code = generate_script(ds, raw_path=str(raw_path), figure_spec=spec,
-                               out_stem=str(path.with_name(path.stem + "_ergebnis")))
+                               out_stem=str(path.with_name(path.stem + "_results")))
         path.write_text(code, encoding="utf-8")
-        self.statusBar().showMessage(f"Skript geschrieben: {path}", 5000)
+        self.statusBar().showMessage(f"Script written: {path}", 5000)
 
     # ================================================================ misc
     def about(self):
         QtWidgets.QMessageBox.about(
-            self, "Über EZSpec",
-            f"<b>EZSpec {__version__}</b><br>Spektrenauswertung und Kurvenanpassung mit ehrlicher Statistik."
-            f"<br><br>Numerik-Kern: {'Rust (ezspec._core)' if HAVE_RUST else 'nicht kompiliert'} · aktiv: "
-            f"{backend_name()}<br>Referenz-Engine: lmfit/SciPy · Baselines geprüft gegen pybaselines · Fit-Engine "
-            "geprüft gegen NIST StRD.")
+            self, "About EZSpec",
+            f"<b>EZSpec {__version__}</b><br>Spectral analysis and curve fitting with honest statistics."
+            f"<br><br>Numerics backend: {'Rust (ezspec._core)' if HAVE_RUST else 'not compiled'} · active: "
+            f"{backend_name()}<br>Reference engine: lmfit/SciPy · baselines validated against pybaselines · fit engine "
+            "validated against NIST StRD.")
 
     def dragEnterEvent(self, ev):
         if ev.mimeData().hasUrls():

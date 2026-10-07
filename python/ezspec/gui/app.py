@@ -10,7 +10,7 @@ def main(argv=None) -> int:
     try:
         from PySide6 import QtWidgets
     except ImportError:  # pragma: no cover
-        print("Die GUI benötigt PySide6 und pyqtgraph:  pip install 'ezspec[gui]'", file=sys.stderr)
+        print("The GUI requires PySide6 and pyqtgraph:  pip install 'ezspec[gui]'", file=sys.stderr)
         return 1
     from .theme import apply_palette, configure_pyqtgraph
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(argv)

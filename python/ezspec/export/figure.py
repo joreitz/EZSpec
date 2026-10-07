@@ -23,18 +23,18 @@ MM = 1.0 / 25.4
 # Column widths as published in author guidelines (no guarantee – check the
 # current guide of the journal before submission).
 PRESETS = {
-    "elsevier_1": {"title": "Elsevier – 1 Spalte (90 mm)", "width_mm": 90, "height_mm": 68, "font_size": 8},
-    "elsevier_15": {"title": "Elsevier – 1,5 Spalten (140 mm)", "width_mm": 140, "height_mm": 95, "font_size": 8},
-    "elsevier_2": {"title": "Elsevier – 2 Spalten (190 mm)", "width_mm": 190, "height_mm": 110, "font_size": 8},
-    "acs_1": {"title": "ACS – 1 Spalte (3,25 in)", "width_mm": 82.55, "height_mm": 62, "font_size": 8},
-    "acs_2": {"title": "ACS – 2 Spalten (7 in)", "width_mm": 177.8, "height_mm": 100, "font_size": 8},
-    "aps_1": {"title": "APS/AIP – 1 Spalte (8,6 cm)", "width_mm": 86, "height_mm": 65, "font_size": 8},
-    "aps_2": {"title": "APS/AIP – 2 Spalten (17,8 cm)", "width_mm": 178, "height_mm": 100, "font_size": 8},
-    "nature_1": {"title": "Nature – 1 Spalte (89 mm)", "width_mm": 89, "height_mm": 67, "font_size": 7},
-    "nature_2": {"title": "Nature – 2 Spalten (183 mm)", "width_mm": 183, "height_mm": 100, "font_size": 7},
-    "presentation": {"title": "Präsentation 16:9", "width_mm": 254, "height_mm": 142.9, "font_size": 16},
+    "elsevier_1": {"title": "Elsevier – 1 column (90 mm)", "width_mm": 90, "height_mm": 68, "font_size": 8},
+    "elsevier_15": {"title": "Elsevier – 1.5 columns (140 mm)", "width_mm": 140, "height_mm": 95, "font_size": 8},
+    "elsevier_2": {"title": "Elsevier – 2 columns (190 mm)", "width_mm": 190, "height_mm": 110, "font_size": 8},
+    "acs_1": {"title": "ACS – 1 column (3.25 in)", "width_mm": 82.55, "height_mm": 62, "font_size": 8},
+    "acs_2": {"title": "ACS – 2 columns (7 in)", "width_mm": 177.8, "height_mm": 100, "font_size": 8},
+    "aps_1": {"title": "APS/AIP – 1 column (8.6 cm)", "width_mm": 86, "height_mm": 65, "font_size": 8},
+    "aps_2": {"title": "APS/AIP – 2 columns (17.8 cm)", "width_mm": 178, "height_mm": 100, "font_size": 8},
+    "nature_1": {"title": "Nature – 1 column (89 mm)", "width_mm": 89, "height_mm": 67, "font_size": 7},
+    "nature_2": {"title": "Nature – 2 columns (183 mm)", "width_mm": 183, "height_mm": 100, "font_size": 7},
+    "presentation": {"title": "Presentation 16:9", "width_mm": 254, "height_mm": 142.9, "font_size": 16},
 }
-PRESET_NOTE = "Maße laut Autorenrichtlinien (ohne Gewähr) – vor Einreichung die aktuelle Vorgabe prüfen."
+PRESET_NOTE = "Dimensions as given in the author guidelines (without guarantee) – check the current requirements before submission."
 
 _FALLBACK_CYCLE = ["#3f90da", "#ffa90e", "#bd1f01", "#94a4a2", "#832db6", "#a96b59", "#e76300",
                    "#b9ac70", "#717581", "#92dadd"]
@@ -108,21 +108,32 @@ def set_path(spec, path: str, value):
 # ============================================================================ curves
 def curves_for(processed, raw=None, result=None, model=None, n_dense: int = 2000) -> dict:
     """All plottable curves of one dataset: name -> (x, y, yerr or None)."""
+    from ..sweeps import display_order, display_order_masked
+
+    def ordered(order, *arrays):
+        # back-and-forth (multi-sweep) data are listed in acquisition order so
+        # that line traces follow the ramps instead of zigzagging between them
+        if order is None:
+            return arrays
+        return tuple(None if a is None else np.asarray(a)[order] for a in arrays)
+
     c = {}
-    c["processed"] = (processed.x, processed.y, processed.sigma)
+    po = display_order(processed)
+    c["processed"] = ordered(po, processed.x, processed.y, processed.sigma)
     if raw is not None:
-        c["raw"] = (raw.x, raw.y, raw.sigma)
+        c["raw"] = ordered(display_order(raw), raw.x, raw.y, raw.sigma)
     for k in ("baseline", "baseline_total", "smoothed"):
         if k in processed.aux:
-            c[k] = (processed.x, processed.aux[k], None)
+            c[k] = ordered(po, processed.x, processed.aux[k], None)
     if "baseline_total" in processed.aux:
-        c["processed_plus_baseline"] = (processed.x, processed.y + processed.aux["baseline_total"], None)
+        c["processed_plus_baseline"] = ordered(po, processed.x, processed.y + processed.aux["baseline_total"], None)
     if result is not None:
-        c["fit"] = (result.x, result.best_fit, None)
-        c["residuals"] = (result.x, result.residuals, None)
-        c["normalized_residuals"] = (result.x, result.normalized_residuals, None)
+        ro = display_order_masked(processed, result.mask) if len(result.mask) == processed.n else None
+        c["fit"] = ordered(ro, result.x, result.best_fit, None)
+        c["residuals"] = ordered(ro, result.x, result.residuals, None)
+        c["normalized_residuals"] = ordered(ro, result.x, result.normalized_residuals, None)
         for k, v in result.components.items():
-            c[f"component:{k}"] = (result.x, v, None)
+            c[f"component:{k}"] = ordered(ro, result.x, v, None)
         mdl = model if model is not None else result._internals.get("model")
         if mdl is not None and not mdl.independent_variables and len(result.x) > 1:
             xd = np.linspace(result.x.min(), result.x.max(), max(n_dense, 4 * len(result.x)))
@@ -132,6 +143,13 @@ def curves_for(processed, raw=None, result=None, model=None, n_dense: int = 2000
                 c[f"component_dense:{k}"] = (xd, v, None)
         else:
             c["fit_dense"] = c["fit"]
+    # y(x, v) data (e.g. a calibration surface): one curve per value of v
+    from ..slices import slice_curves
+    mdl = model if model is not None else (result._internals.get("model") if result is not None else None)
+    for it in slice_curves(processed, mdl, result.values if result is not None else None):
+        c[f"slice_data:{it['label']}"] = (it["x"], it["y"], it["sigma"])
+        if it["xd"] is not None:
+            c[f"slice_fit:{it['label']}"] = (it["xd"], it["yd"], None)
     return c
 
 
@@ -141,7 +159,7 @@ def make_resolver(curves: dict) -> Callable:
         try:
             return curves[source][curve]
         except KeyError:
-            raise KeyError(f"Kurve {curve!r} von {source!r} nicht verfügbar") from None
+            raise KeyError(f"curve {curve!r} of {source!r} not available") from None
     return resolve
 
 
@@ -151,9 +169,20 @@ def default_spec(source: str, curves: dict, x_label: str = "", y_label: str = ""
     spec = new_spec(preset)
     main = new_panel(3.0, xlabel=x_label, ylabel=y_label)
     n = len(curves["processed"][0])
-    main["traces"].append(new_trace(source, "processed", "scatter" if n <= 400 else "line", label=name,
-                                    color="#555555", lw=0.8, ms=2.0, zorder=1))
-    if "fit" in curves:
+    slices = [k.split(":", 1)[1] for k in curves if k.startswith("slice_data:")]
+    if slices:
+        cyc = color_cycle(spec.get("colors", "petroff10"))
+        for i, lab in enumerate(slices):
+            col = cyc[i % len(cyc)]
+            fit_key = f"slice_fit:{lab}"
+            main["traces"].append(new_trace(source, f"slice_data:{lab}", "scatter", color=col, ms=2.5, zorder=1,
+                                            label="" if fit_key in curves else lab))
+            if fit_key in curves:
+                main["traces"].append(new_trace(source, fit_key, "line", label=lab, color=col, lw=1.0, zorder=3))
+    else:
+        main["traces"].append(new_trace(source, "processed", "scatter" if n <= 400 else "line", label=name,
+                                        color="#555555", lw=0.8, ms=2.0, zorder=1))
+    if "fit" in curves and not slices:
         comps = [k for k in curves if k.startswith("component_dense:")]
         if components and len(comps) > 1:
             for k in comps:
@@ -167,7 +196,7 @@ def default_spec(source: str, curves: dict, x_label: str = "", y_label: str = ""
         rk = "normalized_residuals" if normalized else "residuals"
         rp = new_panel(1.0, xlabel=x_label, ylabel="Res./σ" if normalized else "Residuals", legend=None,
                        zero_line=True, minor_ticks=True)
-        rp["traces"].append(new_trace(source, rk, "scatter" if n <= 400 else "line", color="#555555",
+        rp["traces"].append(new_trace(source, rk, "scatter" if n <= 400 or slices else "line", color="#555555",
                                       lw=0.6, ms=1.5))
         spec["panels"].append(rp)
     return spec
@@ -243,7 +272,7 @@ def _draw_panel(ax, panel, resolve, cycle):
         elif kind == "step":
             ax.step(x, y, where="mid", lw=lw, **kw)
         else:
-            raise ValueError(f"unbekannte Spurart {kind!r}")
+            raise ValueError(f"unknown trace kind {kind!r}")
     if panel.get("zero_line"):
         ax.axhline(0.0, color="0.4", lw=0.5, zorder=0)
     ax.set_xlabel(panel.get("xlabel", ""))

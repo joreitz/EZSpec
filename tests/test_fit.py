@@ -75,7 +75,7 @@ def test_unknown_sigma_reports_no_chi2():
     assert st.chi2 is None and st.redchi is None and st.covariance_mode == "scaled"
     assert st.ic_k == st.n_varys + 1
     assert st.s_res == pytest.approx(0.05, rel=0.1)
-    assert "χ²: nicht definiert" in r.report()
+    assert "χ²: not defined" in r.report()
 
 
 def test_wrong_sigma_is_flagged_not_hidden():
@@ -270,7 +270,7 @@ def test_templates_and_peak_finding():
     x = np.linspace(0, 10, 300)
     y = 2 + 5 * np.exp(-x / 1.7) + rng.normal(scale=0.01, size=300)
     m = Model()
-    add_template(m, "Exp. Zerfall (1)")
+    add_template(m, "Exp. decay (1)")
     r = fit(spectrum(x, y), m)
     assert r.value("tau") == pytest.approx(1.7, rel=0.01)
     assert not r.params["x0"].vary
@@ -308,7 +308,7 @@ def test_baseline_systematics_reports_spread():
     assert res["variants"] == [3e6, 1e7, 3e7]
     area = res["table"]["p1_area"]
     assert len(area["values"]) == 3 and area["systematic"] >= 0
-    assert any("syst., Baseline" in line for line in res["summary"])
+    assert any("syst., baseline" in line for line in res["summary"])
 
 
 @pytest.mark.slow
@@ -343,7 +343,7 @@ def test_poisson_deviance_reported():
     m.add("constant", c=2.0)
     r = fit(spectrum(x, counts), m, FitOptions(weighting="poisson_model"))
     assert r.stats.poisson_deviance / r.stats.dof == pytest.approx(1.0, abs=0.35)
-    assert "Poisson-Devianz" in r.report()
+    assert "Poisson deviance" in r.report()
 
 
 def test_mcmc_agrees_with_linear_errors_for_a_well_determined_fit():

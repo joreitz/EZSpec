@@ -140,7 +140,7 @@ def test_peaks_fit_statistics_and_analysis(app, win, tmp_path):
     for c in m2.peaks:
         add_peak(g, "gaussian", c.settings["center"].value, 10, 8)
     r2 = fit(w.state.run(ds).final, g, ds.fit_options)
-    dlg = CompareDialog({"Lorentz": ds.fit_result, "Gauß": r2})
+    dlg = CompareDialog({"Lorentz": ds.fit_result, "Gaussian": r2})
     assert dlg.null.count() == 2
     # figure dialog renders and edits are undoable
     fd = FigureDialog(ds, None, w)
@@ -290,3 +290,110 @@ def test_entry_point_starts_imports_and_quits(tmp_path):
     res = subprocess.run([sys.executable, str(script), str(f)], capture_output=True, text=True, timeout=120,
                          env=env)
     assert "RESULT 0 1" in res.stdout, res.stdout + res.stderr
+
+
+def test_combine_dialog_creates_derived_dataset(app, win):
+    from ezspec.gui.dialogs import CombineDialog
+    from ezspec.project import Dataset
+    w = win
+    t = np.linspace(0, 10, 101)
+    for name, y in (("U", 2 + 0.5 * t), ("I", 0.4 + 0.1 * t)):
+        data = ("t,val,sig\n" + "\n".join(f"{a!r},{b!r},0.01" for a, b in zip(t.tolist(), y.tolist()))).encode()
+        ds = Dataset.from_bytes(data, f"{name}.csv", y_cols=[1], sigma_col=2)
+        ds.name = name
+        w.state.add_dataset(ds)
+    pump(app)
+    dlg = CombineDialog(w.state, w)
+    for i in range(dlg.table.rowCount()):        # use only U (alias b) and I (alias c)
+        name = dlg.table.item(i, 2).text()
+        dlg.table.item(i, 0).setCheckState(QtCore.Qt.Checked if name in ("U", "I") else QtCore.Qt.Unchecked)
+    dlg.yexpr.setText("b/c")
+    dlg.name.setText("R")
+    dlg.update_preview()
+    assert dlg.result is not None and dlg.result.sigma is not None, dlg.info.text()
+    assert "identical x grid" in dlg.info.text()
+    n_before = len(w.state.project.datasets)
+    dlg._accept()
+    pump(app)
+    new = w.state.current()
+    assert len(w.state.project.datasets) == n_before + 1 and new.name == "R"
+    np.testing.assert_allclose(new.raw.y, (2 + 0.5 * t) / (0.4 + 0.1 * t))
+    dlg2 = CombineDialog(w.state, w)
+    dlg2.xexpr.setText("nonsense_name")
+    dlg2.update_preview()
+    assert dlg2.result is None and "unknown names" in dlg2.info.text()
+
+
+def test_back_and_forth_ramp_is_drawn_in_acquisition_order(app, win):
+    from ezspec.project import Dataset
+    w = win
+    up = np.linspace(10.0, 50.0, 120)
+    x = np.concatenate([up, up[::-1], up, up[::-1]])
+    y = np.concatenate([np.exp(-0.5 * ((x[:240] - c) / 2) ** 2) for c in (30.0,)] * 2)
+    data = ("I,S\n" + "\n".join(f"{a!r},{b!r}" for a, b in zip(x.tolist(), y.tolist()))).encode()
+    ds = Dataset.from_bytes(data, "ramp.csv")
+    w.state.add_dataset(ds)
+    pump(app)
+    w.state.set_current(ds.id)
+    w.refresh_plot()
+    xd, _ = w.plot.c_data.getData()
+    np.testing.assert_allclose(xd, x)                   # not re-sorted: no zigzag between the ramps
+    assert not w.plot.c_data.opts["clipToView"]
+    w.plot.act_points.setChecked(True)
+    assert w.plot.c_data.opts["symbol"] == "o"
+    w.plot.act_points.setChecked(False)
+    w.pipeline_panel.add_step("select_sweeps")
+    pump(app)
+    w.state.select_step(None)
+    w.refresh_plot()
+    xd, _ = w.plot.c_data.getData()
+    assert len(xd) == 240 and np.sum(np.diff(xd) < 0) == 1    # two up ramps, drawn one after the other
+
+
+def test_calibration_surface_slices_and_dialog(app, win):
+    from ezspec.gui.dialogs import CalibrationDialog
+    from ezspec.project import Dataset
+    w = win
+    rng = np.random.default_rng(0)
+    I = np.tile(np.linspace(20, 80, 13), 5)
+    T = np.repeat([15.0, 20, 25, 30, 35], 13)
+    lam = 1530 + 0.01 * (I - 50) + 0.1 * (T - 25) + rng.normal(scale=0.002, size=I.size)
+    rows = "\n".join(f"{a!r},{b!r},{c!r}" for a, b, c in zip(I.tolist(), T.tolist(), lam.tolist()))
+    cal = Dataset.from_bytes(("I_mA,T / °C,lambda_nm\n" + rows).encode(), "cal.csv", y_cols=[2],
+                             extra_cols={"T": 1})
+    cal.name = "Kalibrierung"
+    xs = np.linspace(30, 70, 200)
+    meas = Dataset.from_bytes(("I_mA,S\n" + "\n".join(f"{a!r},{b!r}" for a, b in zip(xs.tolist(), np.sin(xs).tolist()))
+                               ).encode(), "meas.csv")
+    meas.name = "Messung"
+    w.state.add_dataset(meas)
+    w.state.add_dataset(cal)
+    pump(app)
+    w.state.set_current(cal.id)
+    w.refresh_plot()
+    assert len(w.plot._slice_items) == 5 and not w.plot.c_data.isVisible()   # one group per T, no zigzag
+    assert w.model_panel._extra_variables() == ["T"]
+    w.model_panel.add_surface("plane", "T")
+    pump(app)
+    w.run_fit()
+    wait(app, w)
+    assert cal.fit_result is not None and cal.fit_result.success
+    w.refresh_plot()
+    assert len(w.plot._slice_items) == 10                                  # points + slice curve per T
+    sources = [cal]
+    dlg = CalibrationDialog(w.state, sources, source=cal, target=meas, parent=w)
+    assert list(dlg.fixed_edits) == ["T"] and dlg.fixed_edits["T"].value() == 25.0
+    targets = dlg.checked_targets()
+    assert [t.id for t in targets] == [meas.id]
+    assert "within calibrated range" in dlg.slice_info.text()
+    dlg._accept()
+    w.apply_calibration(dlg.params, dlg.targets)
+    pump(app)
+    assert meas.pipeline.steps[-1].op == "calibrate_x"
+    out = w.state.run(meas).final
+    v = cal.fit_result.values
+    np.testing.assert_allclose(out.x, v["c0"] + v["cx"] * (xs - 50) + v["cT"] * 0.0, atol=1e-9)
+    assert out.x_unit == "nm" or out.x_label
+    w.state.undo.undo()
+    pump(app)
+    assert not meas.pipeline.steps or meas.pipeline.steps[-1].op != "calibrate_x"

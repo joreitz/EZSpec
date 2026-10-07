@@ -9,12 +9,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .theme import COLORS, COMPONENT_COLORS
 
 MODES = {
-    "navigate": ("Navigieren", "Zoomen (Mausrad/Rechtsziehen) und Verschieben (Linksziehen)"),
-    "anchor": ("Anker", "Klick: Baseline-Anker (rastet auf den Daten ein, Shift: frei) · Ziehen: verschieben "
-                        "· Rechtsklick: löschen"),
-    "region": ("Bereich", "Klick: Bereich hinzufügen (Masken, Baseline-/Rausch-/Fitbereich) · Ränder ziehen "
-                          "· Rechtsklick: löschen"),
-    "peak": ("Peak", "Klick: Peak an dieser Stelle hinzufügen · Marker ziehen: Lage/Höhe bzw. Breite"),
+    "navigate": ("Navigate", "Zoom (mouse wheel / right-drag) and pan (left-drag)"),
+    "anchor": ("Anchor", "Click: baseline anchor (snaps to the data; Shift: free) · Drag: move "
+                         "· Right-click: delete"),
+    "region": ("Range", "Click: add range (masks, baseline/noise/fit range) · Drag edges to resize "
+                        "· Right-click: delete"),
+    "peak": ("Peak", "Click: add a peak here · Drag markers: position/height or width"),
 }
 
 
@@ -47,6 +47,21 @@ def _curve(pen, name=None, **kw):
     return item
 
 
+def _set_curve_data(item, x, y):
+    """setData with view clipping / downsampling only for x-sorted data: both
+    pyqtgraph optimisations assume increasing x and would drop or merge points
+    of back-and-forth (multi-sweep) data drawn in acquisition order."""
+    x = np.asarray(x)
+    y = np.asarray(y)
+    ordered = len(x) < 2 or not np.any(np.diff(x) < 0)
+    item.setClipToView(ordered)
+    if ordered:
+        item.setDownsampling(auto=True, method="peak")
+    else:
+        item.setDownsampling(ds=1, auto=False)
+    item.setData(x, y)
+
+
 class PlotView(QtWidgets.QWidget):
     anchorsEdited = QtCore.Signal(list)
     rangesEdited = QtCore.Signal(str, list)
@@ -67,6 +82,7 @@ class PlotView(QtWidgets.QWidget):
         self._anchors = []
         self._peak_items = []
         self._component_items = []
+        self._slice_items = []
         self._x_extent = (0.0, 1.0)
         self._data = (np.array([]), np.array([]))
 
@@ -88,17 +104,22 @@ class PlotView(QtWidgets.QWidget):
             self.mode_actions[key] = a
         self.mode_actions["navigate"].setChecked(True)
         self.toolbar.addSeparator()
-        self.act_auto = self.toolbar.addAction("Autoskalieren", self.autorange)
-        self.act_invert = QtGui.QAction("x invertieren", self, checkable=True)
-        self.act_invert.setToolTip("x-Achse umkehren (z. B. IR-Wellenzahlen)")
+        self.act_auto = self.toolbar.addAction("Auto-range", self.autorange)
+        self.act_invert = QtGui.QAction("Invert x", self, checkable=True)
+        self.act_invert.setToolTip("Reverse the x axis (e.g. IR wavenumbers)")
         self.act_invert.toggled.connect(lambda on: self.p_main.getViewBox().invertX(on))
         self.toolbar.addAction(self.act_invert)
-        self.act_components = QtGui.QAction("Komponenten", self, checkable=True, checked=True)
+        self.act_components = QtGui.QAction("Components", self, checkable=True, checked=True)
         self.act_components.toggled.connect(lambda on: [c.setVisible(on) for c in self._component_items])
         self.toolbar.addAction(self.act_components)
-        self.act_resid = QtGui.QAction("Residuen", self, checkable=True, checked=True)
+        self.act_resid = QtGui.QAction("Residuals", self, checkable=True, checked=True)
         self.act_resid.toggled.connect(self._toggle_resid)
         self.toolbar.addAction(self.act_resid)
+        self.act_points = QtGui.QAction("Points", self, checkable=True)
+        self.act_points.setToolTip("Draw data as points instead of a line")
+        self.act_points.toggled.connect(lambda _on: self._apply_data_style())
+        self.toolbar.addAction(self.act_points)
+        self._scatter = False
         self.hint = QtWidgets.QLabel()
         self.hint.setObjectName("hint")
         self.hint.setContentsMargins(8, 2, 8, 2)
@@ -125,9 +146,9 @@ class PlotView(QtWidgets.QWidget):
         self.c_smooth = _curve(pg.mkPen(COLORS["smoothed"], width=1.5))
         self.c_preview = _curve(pg.mkPen(COLORS["preview"], width=1.5, style=QtCore.Qt.DashLine))
         self.c_fit = _curve(pg.mkPen(COLORS["fit"], width=2))
-        self._legend_names = [(self.c_input, "Eingang"), (self.c_data, "Daten"), (self.c_excl, "ausgeschlossen"),
-                              (self.c_base, "Baseline"), (self.c_smooth, "geglättet (Anzeige)"),
-                              (self.c_preview, "Modell (Startwerte)"), (self.c_fit, "Fit")]
+        self._legend_names = [(self.c_input, "Input"), (self.c_data, "Data"), (self.c_excl, "Excluded"),
+                              (self.c_base, "Baseline"), (self.c_smooth, "Smoothed (display only)"),
+                              (self.c_preview, "Model (start values)"), (self.c_fit, "Fit")]
         for c, _n in self._legend_names:
             self.p_main.addItem(c)
         self.c_res = _curve(pg.mkPen(COLORS["resid"], width=1))
@@ -153,25 +174,41 @@ class PlotView(QtWidgets.QWidget):
     def _toggle_resid(self, on):
         self.p_res.setVisible(on)
 
+    def _apply_data_style(self):
+        if self._scatter or self.act_points.isChecked():   # points instead of a connecting line
+            self.c_data.setPen(None)
+            self.c_data.setSymbol("o")
+            self.c_data.setSymbolSize(4)
+            self.c_data.setSymbolBrush(pg.mkBrush(COLORS["data"]))
+            self.c_data.setSymbolPen(None)
+        else:
+            self.c_data.setPen(pg.mkPen(COLORS["data"], width=1.2))
+            self.c_data.setSymbol(None)
+
     def autorange(self):
         self.p_main.enableAutoRange()
         self.p_res.enableAutoRange()
 
     # ================================================================ scene
     def set_scene(self, *, data, input=None, excluded=None, baseline=None, smoothed=None, fit=None,
-                  fit_stale=False, components=(), preview=None, residuals=None, x_label="", y_label=""):
+                  fit_stale=False, components=(), preview=None, residuals=None, x_label="", y_label="",
+                  scatter=False, slices=()):
+        """slices: list of dicts (label, x, y, xd, yd) – y(x, v) data drawn per value of v."""
         def setc(item, xy):
             if xy is None:
                 item.setData([], [])
                 item.setVisible(False)
             else:
-                item.setData(np.asarray(xy[0]), np.asarray(xy[1]))
+                _set_curve_data(item, xy[0], xy[1])
                 item.setVisible(True)
         x, y = data
         self._data = (np.asarray(x), np.asarray(y))
         if len(x):
             self._x_extent = (float(np.min(x)), float(np.max(x)))
         setc(self.c_data, data)
+        self.c_data.setVisible(not slices)        # y(x, v) data: replaced by coloured groups
+        self._scatter = scatter
+        self._apply_data_style()
         setc(self.c_input, input)
         if excluded is not None and len(excluded[0]):
             self.c_excl.setData(excluded[0], excluded[1])
@@ -196,7 +233,7 @@ class PlotView(QtWidgets.QWidget):
             item.opts["name"] = name
             item.setZValue(-5)
             self.p_main.addItem(item)        # add before setData (pyqtgraph clipToView needs the view)
-            item.setData(cx, cy)
+            _set_curve_data(item, cx, cy)
             item.setVisible(self.act_components.isChecked())
             self._component_items.append(item)
         if residuals is None:
@@ -205,7 +242,7 @@ class PlotView(QtWidgets.QWidget):
                 b.setVisible(False)
         else:
             rx, ry, normalized = residuals
-            self.c_res.setData(rx, ry)
+            _set_curve_data(self.c_res, rx, ry)
             for b in self.res_band:
                 b.setVisible(bool(normalized))
             self.p_res.setLabel("left", "Res./σ" if normalized else "Res.")
@@ -214,10 +251,34 @@ class PlotView(QtWidgets.QWidget):
         self.legend.clear()
         for item, name in self._legend_names:
             if item.isVisible():
-                self.legend.addItem(item, name if not (item is self.c_fit and fit_stale) else "Fit (veraltet)")
+                self.legend.addItem(item, name if not (item is self.c_fit and fit_stale) else "Fit (out of date)")
         for item in self._component_items:
             self.legend.addItem(item, item.opts.get("name") or "")
+        self._set_slices(slices, fit_stale)
         self.p_res.enableAutoRange(axis="y")
+
+    def _set_slices(self, slices, stale=False):
+        for it in self._slice_items:
+            self.p_main.removeItem(it)
+        self._slice_items = []
+        if not slices:
+            return
+        for i, sl in enumerate(slices):
+            col = QtGui.QColor(COMPONENT_COLORS[i % len(COMPONENT_COLORS)])
+            pts = pg.ScatterPlotItem(sl["x"], sl["y"], size=5, pen=None, brush=pg.mkBrush(col))
+            pts.setZValue(2)
+            self.p_main.addItem(pts)
+            self._slice_items.append(pts)
+            if sl.get("xd") is not None:
+                line = pg.PlotDataItem(pen=pg.mkPen(col, width=1.6,
+                                                    style=QtCore.Qt.DashDotLine if stale else QtCore.Qt.SolidLine))
+                self.p_main.addItem(line)
+                _set_curve_data(line, sl["xd"], sl["yd"])
+                line.setZValue(3)
+                self._slice_items.append(line)
+                self.legend.addItem(line, sl["label"])
+            else:
+                self.legend.addItem(pts, sl["label"])
 
     # ================================================================ interactive items
     def set_tools(self, step=None, anchors_eff=None, peaks=(), fit_range=None):
@@ -321,7 +382,7 @@ class PlotView(QtWidgets.QWidget):
         x, y = xy
         if self.mode == "anchor":
             if self._step is None or self._step.op != "baseline_anchors":
-                self.hint.setText("Zum Setzen von Ankern zuerst einen Schritt 'Baseline: Ankerpunkte' wählen.")
+                self.hint.setText("To place anchors, first select a 'Baseline: anchor points' step.")
                 return
             manual = bool(ev.modifiers() & QtCore.Qt.ShiftModifier)
             self._anchors.append([x, y if manual else None])
@@ -339,7 +400,7 @@ class PlotView(QtWidgets.QWidget):
                 if target is None:
                     target = next((n for n, k in kinds.items() if k in ("ranges", "range")), None)
                 if target is None:
-                    self.hint.setText("Dieser Schritt hat keine Bereichsparameter.")
+                    self.hint.setText("This step has no range parameters.")
                     return
                 if kinds[target] == "ranges":
                     lst = self._ranges.get(target, []) + [[a, b]]
@@ -404,5 +465,5 @@ class PlotView(QtWidgets.QWidget):
         if xy is None:
             self.c_preview.setVisible(False)
         else:
-            self.c_preview.setData(*xy)
+            _set_curve_data(self.c_preview, *xy)
             self.c_preview.setVisible(True)

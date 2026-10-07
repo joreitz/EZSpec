@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..fit import METHODS
 from ..fit.result import fmt_value
-from ..models import COMPONENT_TYPES, TEMPLATES, Formula, FormulaError, add_template
+from ..models import COMPONENT_TYPES, SURFACES, TEMPLATES, Formula, FormulaError, add_surface, add_template
+from ..models.library import surface_expression
 from .param_form import fmt_num, parse_num
 from .theme import SEVERITY_COLOR
 
 PEAK_KINDS = [k for k, t in COMPONENT_TYPES.items() if t.category == "peak"]
-WEIGHTING = [("auto", "automatisch (σ falls vorhanden)"), ("sigma", "σ der Daten"),
-             ("none", "keine (σ unbekannt)"), ("poisson_model", "Poisson: σ² = Modell (Zählraten)")]
-COVARIANCE = [("auto", "automatisch"), ("absolute", "absolut (σ bekannt)"), ("scaled", "skaliert mit √χ²_ν")]
+WEIGHTING = [("auto", "automatic (σ if available)"), ("sigma", "σ of the data"),
+             ("none", "none (σ unknown)"), ("poisson_model", "Poisson: σ² = model (counts)"),
+             ("effective_variance", "effective variance (σ_y and σ_x)")]
+COVARIANCE = [("auto", "automatic"), ("absolute", "absolute (σ known)"), ("scaled", "scaled by √χ²_ν")]
 
 
 class FormulaDialog(QtWidgets.QDialog):
@@ -23,23 +26,23 @@ class FormulaDialog(QtWidgets.QDialog):
 
     def __init__(self, expression="", independent="x", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Eigene Funktion")
+        self.setWindowTitle("Custom formula")
         lay = QtWidgets.QVBoxLayout(self)
         lay.addWidget(QtWidgets.QLabel(
-            "Ausdruck in x (NumPy-Syntax, ^ = Potenz). Alle übrigen Namen sind Fitparameter.\n"
-            "Funktionen: exp, log/ln, sqrt, sin, …, erf, gamma, gauss(x,A,c,w), lorentz, voigt(x,A,c,wG,wL), "
+            "Expression in x (NumPy syntax, ^ = power). All other names are fit parameters.\n"
+            "Functions: exp, log/ln, sqrt, sin, …, erf, gamma, gauss(x,A,c,w), lorentz, voigt(x,A,c,wG,wL), "
             "pvoigt, pearson7, emg"))
         self.edit = QtWidgets.QLineEdit(expression)
-        self.edit.setPlaceholderText("z. B.  y0 + A*exp(-x/tau)")
+        self.edit.setPlaceholderText("e.g.  y0 + A*exp(-x/tau)")
         lay.addWidget(self.edit)
         form = QtWidgets.QFormLayout()
         self.indep = QtWidgets.QLineEdit(independent)
-        self.indep.setToolTip("Unabhängige Variablen, durch Komma getrennt; weitere Variablen müssen beim Import "
-                              "als zusätzliche Spalten gewählt worden sein")
-        form.addRow("Unabhängige Variablen", self.indep)
+        self.indep.setToolTip("Independent variables, comma-separated; additional variables must have been selected "
+                              "as extra columns on import")
+        form.addRow("Independent variables", self.indep)
         self.prefix = QtWidgets.QLineEdit("")
-        self.prefix.setToolTip("optionaler Präfix für Parameternamen (nötig, wenn Namen kollidieren)")
-        form.addRow("Präfix", self.prefix)
+        self.prefix.setToolTip("Optional prefix for parameter names (required if names collide)")
+        form.addRow("Prefix", self.prefix)
         lay.addLayout(form)
         self.info = QtWidgets.QLabel()
         self.info.setWordWrap(True)
@@ -59,7 +62,7 @@ class FormulaDialog(QtWidgets.QDialog):
     def _check(self):
         try:
             f = Formula(self.edit.text(), self.independent())
-            self.info.setText(f"<span style='color:#2e7d32'>✓ Parameter: {', '.join(f.parameters)}</span>")
+            self.info.setText(f"<span style='color:#2e7d32'>✓ Parameters: {', '.join(f.parameters)}</span>")
             self.bb.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
         except FormulaError as e:
             self.info.setText(f"<span style='color:{SEVERITY_COLOR['error']}'>✖ {e}</span>")
@@ -71,7 +74,7 @@ class ModelPanel(QtWidgets.QWidget):
     autoPeaksRequested = QtCore.Signal()
     componentSelected = QtCore.Signal(str)
 
-    COLS = ["Parameter", "Start", "Ergebnis ± SE", "frei", "min", "max", "Ausdruck", "Hinweis"]
+    COLS = ["Parameter", "Start", "Result ± SE", "vary", "min", "max", "Expression", "Note"]
     C_NAME, C_START, C_RES, C_VARY, C_MIN, C_MAX, C_EXPR, C_HINT = range(8)
 
     def __init__(self, state, parent=None):
@@ -85,21 +88,21 @@ class ModelPanel(QtWidgets.QWidget):
         self.peak_kind = QtWidgets.QComboBox()
         for k in PEAK_KINDS:
             self.peak_kind.addItem(COMPONENT_TYPES[k].title, k)
-        self.peak_kind.setToolTip("Profiltyp für 'Peak'-Klicks im Plot und automatische Peaksuche")
-        bar.addWidget(QtWidgets.QLabel("Peaktyp:"))
+        self.peak_kind.setToolTip("Line shape for 'Peak' clicks in the plot and for automatic peak search")
+        bar.addWidget(QtWidgets.QLabel("Peak type:"))
         bar.addWidget(self.peak_kind)
         add = QtWidgets.QToolButton()
-        add.setText("+ Komponente")
+        add.setText("+ Component")
         add.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         add.setMenu(self._menu())
         bar.addWidget(add)
         auto = QtWidgets.QToolButton()
-        auto.setText("Peaks finden")
-        auto.setToolTip("Startwerte aus lokalen Maxima (Prominenz > 5·Rauschen)")
+        auto.setText("Find peaks")
+        auto.setToolTip("Start values from local maxima (prominence > 5 × noise)")
         auto.clicked.connect(self.autoPeaksRequested.emit)
         bar.addWidget(auto)
         rem = QtWidgets.QToolButton()
-        rem.setText("Entfernen")
+        rem.setText("Remove")
         rem.clicked.connect(self._remove)
         bar.addWidget(rem)
         bar.addStretch()
@@ -134,33 +137,33 @@ class ModelPanel(QtWidgets.QWidget):
         self.covariance = QtWidgets.QComboBox()
         for k, v in COVARIANCE:
             self.covariance.addItem(v, k)
-        self.covariance.setToolTip("Bei bekanntem σ ist 'absolut' korrekt; Skalieren verdeckt Fehlanpassung.")
+        self.covariance.setToolTip("With known σ, 'absolute' is correct; scaling hides lack of fit.")
         self.range_label = QtWidgets.QLabel()
         rng_row = QtWidgets.QHBoxLayout()
         rng_row.addWidget(self.range_label, 1)
         clr = QtWidgets.QToolButton()
-        clr.setText("ganzer Bereich")
-        clr.clicked.connect(lambda: self._set_option("x_range", None, "Fitbereich zurücksetzen"))
+        clr.setText("full range")
+        clr.clicked.connect(lambda: self._set_option("x_range", None, "Reset fit range"))
         rng_row.addWidget(clr)
-        form.addRow("Methode", self.method)
-        form.addRow("Gewichtung", self.weighting)
-        form.addRow("Kovarianz", self.covariance)
-        form.addRow("Fitbereich", rng_row)
+        form.addRow("Method", self.method)
+        form.addRow("Weighting", self.weighting)
+        form.addRow("Covariance", self.covariance)
+        form.addRow("Fit range", rng_row)
         self.method.currentIndexChanged.connect(lambda: self._set_option("method", self.method.currentData()))
         self.weighting.currentIndexChanged.connect(
             lambda: self._set_option("weighting", self.weighting.currentData()))
         self.covariance.currentIndexChanged.connect(
             lambda: self._set_option("covariance", self.covariance.currentData()))
         btns = QtWidgets.QHBoxLayout()
-        self.fit_btn = QtWidgets.QPushButton("Fit ausführen")
+        self.fit_btn = QtWidgets.QPushButton("Run fit")
         self.fit_btn.setObjectName("primary")
         self.fit_btn.setShortcut(QtGui.QKeySequence("Ctrl+R"))
-        self.fit_btn.setToolTip("Fit starten (Strg+R)")
+        self.fit_btn.setToolTip("Run the fit (Ctrl+R)")
         self.fit_btn.clicked.connect(self.fitRequested.emit)
-        self.adopt_btn = QtWidgets.QPushButton("Ergebnis → Startwerte")
+        self.adopt_btn = QtWidgets.QPushButton("Results → start values")
         self.adopt_btn.clicked.connect(self._adopt)
-        self.live = QtWidgets.QCheckBox("Live-Fit")
-        self.live.setToolTip("Nach jeder Änderung (z. B. Peak ziehen) automatisch neu fitten")
+        self.live = QtWidgets.QCheckBox("Live fit")
+        self.live.setToolTip("Refit automatically after every change (e.g. dragging a peak)")
         btns.addWidget(self.fit_btn)
         btns.addWidget(self.adopt_btn)
         btns.addWidget(self.live)
@@ -180,25 +183,75 @@ class ModelPanel(QtWidgets.QWidget):
             a = pk.addAction(COMPONENT_TYPES[k].title)
             a.setToolTip(COMPONENT_TYPES[k].formula_text)
             a.triggered.connect(lambda _=False, k=k: self.add_component(k))
-        bg = m.addMenu("Untergrund (linear, mitfittbar)")
-        bg.addAction("Konstante").triggered.connect(lambda: self.add_component("constant"))
-        bg.addAction("Gerade").triggered.connect(lambda: self.add_component("linear"))
+        bg = m.addMenu("Background (linear, fitted jointly)")
+        bg.addAction("Constant").triggered.connect(lambda: self.add_component("constant"))
+        bg.addAction("Straight line").triggered.connect(lambda: self.add_component("linear"))
         for order in (2, 3, 4, 5):
-            bg.addAction(f"Polynom Grad {order}").triggered.connect(
+            bg.addAction(f"Polynomial, degree {order}").triggered.connect(
                 lambda _=False, o=order: self.add_component("polynomial", {"order": o}))
         cats = {}
         for t in TEMPLATES:
             cats.setdefault(t.category, []).append(t)
-        fm = m.addMenu("Klassische Funktion")
+        fm = m.addMenu("Classic function")
         for cat, items in cats.items():
             sub = fm.addMenu(cat)
             for t in items:
                 a = sub.addAction(f"{t.name}:  {t.expression}")
                 a.setToolTip(t.description)
                 a.triggered.connect(lambda _=False, n=t.name: self.add_template(n))
+        self.surface_menu = m.addMenu("Surface f(x, v) – calibration")
+        self.surface_menu.setToolTipsVisible(True)
+        self.surface_menu.aboutToShow.connect(self._fill_surface_menu)
         m.addSeparator()
-        m.addAction("Eigene Formel…").triggered.connect(self.add_formula)
+        m.addAction("Custom formula…").triggered.connect(self.add_formula)
         return m
+
+    def _extra_variables(self):
+        ds = self._ds()
+        if ds is None:
+            return []
+        s = self.state.run(ds).final
+        return [k[4:] for k in s.aux if k.startswith("var:")]
+
+    def _fill_surface_menu(self):
+        menu = self.surface_menu
+        menu.clear()
+        names = self._extra_variables()
+        if not names:
+            a = menu.addAction("no additional variable – select a column under 'Extra variables' on import")
+            a.setEnabled(False)
+            return
+        for v in names:
+            sub = menu.addMenu(f"y(x, {v})") if len(names) > 1 else menu
+            x0, v0, _ = self._surface_centre(v)
+            for kind, title in SURFACES.items():
+                a = sub.addAction(f"{title.split(':')[0]}:  {surface_expression(kind, v, x0, v0)}")
+                a.setToolTip(f"Polynomial surface in x and {v}, centred on the data; then fit and use "
+                             "'Analysis → Apply fit as x calibration'")
+                a.triggered.connect(lambda _=False, k=kind, v=v: self.add_surface(k, v))
+
+    def _surface_centre(self, var):
+        s = self.state.run(self._ds()).final
+        if not s.n:
+            return 0.0, 0.0, 0.0
+        return float(np.median(s.x)), float(np.median(s.aux[f"var:{var}"])), float(np.median(s.y))
+
+    def add_surface(self, kind, var):
+        x0, v0, y0 = self._surface_centre(var)
+
+        def mut(m):
+            names = set(m.param_names())
+            prefix = ""
+            if names & {"c0", "cx", f"c{var}"}:
+                i = 2
+                while any(n.startswith(f"f{i}_") for n in names):
+                    i += 1
+                prefix = f"f{i}_"
+            add_surface(m, kind, var, x0, v0, y0, prefix=prefix)
+        try:
+            self.state.edit("model", mut, f"Surface: {SURFACES[kind].split(':')[0]}")
+        except Exception as e:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(self, "Model", str(e))
 
     def _ds(self):
         return self.state.current()
@@ -220,9 +273,9 @@ class ModelPanel(QtWidgets.QWidget):
             span = float(s.x.max() - s.x.min()) if s.n else 1.0
             from ..models.library import add_peak
             h = float(s.y.max() - s.y.min()) if s.n else 1.0
-            self.state.edit("model", lambda m: add_peak(m, kind, xc, h, 0.05 * span), f"Peak hinzufügen ({kind})")
+            self.state.edit("model", lambda m: add_peak(m, kind, xc, h, 0.05 * span), f"Add peak ({kind})")
             return
-        self.state.edit("model", lambda m: m.add(kind, options=options), f"Komponente hinzufügen ({kind})")
+        self.state.edit("model", lambda m: m.add(kind, options=options), f"Add component ({kind})")
 
     def add_template(self, name):
         def mut(m):
@@ -237,9 +290,9 @@ class ModelPanel(QtWidgets.QWidget):
                 prefix = f"f{i}_"
             add_template(m, name, prefix=prefix)
         try:
-            self.state.edit("model", mut, f"Funktion: {name}")
+            self.state.edit("model", mut, f"Function: {name}")
         except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Modell", str(e))
+            QtWidgets.QMessageBox.warning(self, "Model", str(e))
 
     def add_formula(self):
         dlg = FormulaDialog(parent=self)
@@ -249,28 +302,28 @@ class ModelPanel(QtWidgets.QWidget):
         try:
             self.state.edit("model", lambda m: m.add("formula", prefix=prefix,
                                                       options={"expression": expr, "independent": indep}),
-                            "Formel hinzufügen")
+                            "Add formula")
         except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Modell", str(e))
+            QtWidgets.QMessageBox.warning(self, "Model", str(e))
 
     def _remove(self):
         it = self.components.currentItem()
         if it is None:
             return
         idx = self.components.row(it)
-        self.state.edit("model", lambda m: m.remove(idx), "Komponente entfernen")
+        self.state.edit("model", lambda m: m.remove(idx), "Remove component")
 
     def _adopt(self):
         ds = self._ds()
         if ds is None or ds.fit_result is None:
             return
         vals = ds.fit_result.values
-        self.state.edit("model", lambda m: m.apply_values(vals), "Ergebnis als Startwerte")
+        self.state.edit("model", lambda m: m.apply_values(vals), "Results as start values")
 
     def _set_option(self, name, value, text=None):
         if self._updating or self._ds() is None:
             return
-        self.state.edit("options", lambda o: setattr(o, name, value), text or f"Fit-Option: {name}")
+        self.state.edit("options", lambda o: setattr(o, name, value), text or f"Fit option: {name}")
 
     # ------------------------------------------------------------------ table
     def refresh(self):
@@ -297,7 +350,7 @@ class ModelPanel(QtWidgets.QWidget):
             self.method.setCurrentIndex(max(self.method.findData(o.method), 0))
             self.weighting.setCurrentIndex(max(self.weighting.findData(o.weighting), 0))
             self.covariance.setCurrentIndex(max(self.covariance.findData(o.covariance), 0))
-            self.range_label.setText("ganzer Bereich (nur Maske)" if not o.x_range else
+            self.range_label.setText("full range (mask only)" if not o.x_range else
                                      f"{fmt_num(o.x_range[0])} … {fmt_num(o.x_range[1])}")
             self.adopt_btn.setEnabled(res is not None)
         finally:
@@ -327,18 +380,18 @@ class ModelPanel(QtWidgets.QWidget):
         chk.setFlags((chk.flags() | QtCore.Qt.ItemIsUserCheckable) & ~QtCore.Qt.ItemIsEditable)
         chk.setCheckState(QtCore.Qt.Checked if st.vary and not st.expr else QtCore.Qt.Unchecked)
         self.table.setItem(r, self.C_VARY, chk)
-        self.table.setItem(r, self.C_EXPR, item(st.expr or "", True, "Constraint, z. B. p1_fwhm (gleiche Breite) "
-                                                                     "oder p1_center + 12.5"))
+        self.table.setItem(r, self.C_EXPR, item(st.expr or "", True, "Constraint, e.g. p1_fwhm (same width) "
+                                                                     "or p1_center + 12.5"))
         txt, hint, color = "", "", None
         if res is not None and name in res.params:
             p = res.params[name]
             txt = fmt_value(p.value, p.stderr)
             if p.at_bound:
-                hint, color = f"am Bound ({p.at_bound})", SEVERITY_COLOR["warning"]
+                hint, color = f"at bound ({p.at_bound})", SEVERITY_COLOR["warning"]
             elif p.near_bound:
-                hint, color = "nahe Bound", SEVERITY_COLOR["info"]
+                hint, color = "near bound", SEVERITY_COLOR["info"]
             elif p.stderr is not None and p.value != 0 and abs(p.stderr / p.value) > 0.5:
-                hint, color = "schlecht bestimmt", SEVERITY_COLOR["warning"]
+                hint, color = "poorly determined", SEVERITY_COLOR["warning"]
         rit = item(txt, False)
         if color:
             rit.setForeground(QtGui.QColor(color))
@@ -380,5 +433,5 @@ class ModelPanel(QtWidgets.QWidget):
         try:
             self.state.edit("model", mut, f"Parameter {local}")
         except Exception as e:  # noqa: BLE001
-            QtWidgets.QMessageBox.warning(self, "Parameter", f"Ungültige Eingabe: {e}")
+            QtWidgets.QMessageBox.warning(self, "Parameter", f"Invalid input: {e}")
             self.refresh()

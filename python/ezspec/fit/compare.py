@@ -25,15 +25,15 @@ def compare(results: dict) -> dict:
     space (Protassov et al. 2002); calibrate such decisions by simulation.
     """
     if len(results) < 2:
-        raise ComparisonError("mindestens zwei Fits nötig")
+        raise ComparisonError("at least two fits required")
     names = list(results)
     hashes = {results[k].data_hash for k in names}
     if len(hashes) != 1:
-        raise ComparisonError("Fits beruhen nicht auf identischen Daten (x-Bereich, Baseline, σ oder "
-                              "Gewichtung verschieden) – Vergleich verweigert")
+        raise ComparisonError("fits are not based on identical data (x range, baseline, σ or "
+                              "weighting differ) – comparison refused")
     forms = {results[k].stats.ic_form for k in names}
     if len(forms) != 1:
-        raise ComparisonError("verschiedene Likelihood-Formen – Vergleich verweigert")
+        raise ComparisonError("different likelihood forms – comparison refused")
     use_aicc = all(np.isfinite(results[k].stats.aicc) for k in names)
     crit = np.array([results[k].stats.aicc if use_aicc else results[k].stats.aic for k in names])
     bic = np.array([results[k].stats.bic for k in names])
@@ -46,8 +46,8 @@ def compare(results: dict) -> dict:
                      "redchi": results[k].stats.redchi, "s_res": results[k].stats.s_res})
     rows.sort(key=lambda r: r["delta_aic"])
     return {"rows": rows, "form": forms.pop(),
-            "note": "Δ < 2: kaum Unterschied; 4–7: deutlich weniger gestützt; > 10: praktisch keine "
-                    "Unterstützung (Burnham & Anderson). Für 'einen Peak mehr' per Simulation kalibrieren."}
+            "note": "Δ < 2: hardly any difference; 4–7: considerably less support; > 10: essentially no "
+                    "support (Burnham & Anderson). For 'one more peak', calibrate by simulation."}
 
 
 def _objective(result) -> float:
@@ -85,10 +85,10 @@ def simulate_nested_test(null, alt, n_sim: int = 200, seed: int | None = 0, prog
     from .engine import fit
 
     if null.data_hash != alt.data_hash:
-        raise ComparisonError("Fits beruhen nicht auf identischen Daten")
+        raise ComparisonError("fits are not based on identical data")
     dp = alt.stats.n_varys - null.stats.n_varys
     if dp <= 0:
-        raise ComparisonError("Alternative muss mehr freie Parameter haben als das Nullmodell")
+        raise ComparisonError("the alternative must have more free parameters than the null model")
     rng = np.random.default_rng(seed)
     t_obs = _objective(null) - _objective(alt)
     spec = null._internals["spectrum"]
@@ -137,9 +137,9 @@ def simulate_nested_test(null, alt, n_sim: int = 200, seed: int | None = 0, prog
     t_sim = np.array(t_sim)
     p = float((1 + np.sum(t_sim >= t_obs)) / (len(t_sim) + 1))
     p_nominal = float(sps.chi2.sf(t_obs, dp))
-    summary = [f"T_obs = {t_obs:.4g} (Δp = {dp}); simulierte p = {p:.3g} aus {len(t_sim)} Replikaten "
-               f"({failed} fehlgeschlagen)",
-               f"nominell χ²({dp}): p = {p_nominal:.3g} – am Parameterrand nicht gültig, nur zum Vergleich",
-               "Test lokal: die zusätzliche Komponente startet an ihrer gefitteten Position."]
+    summary = [f"T_obs = {t_obs:.4g} (Δp = {dp}); simulated p = {p:.3g} from {len(t_sim)} replicates "
+               f"({failed} failed)",
+               f"nominal χ²({dp}): p = {p_nominal:.3g} – not valid at the parameter boundary, for comparison only",
+               "Local test: the additional component starts at its fitted position."]
     return {"t_obs": float(t_obs), "t_sim": t_sim.tolist(), "p_value": p, "p_nominal": p_nominal, "dp": dp,
             "n": int(len(t_sim)), "failed": failed, "summary": summary}

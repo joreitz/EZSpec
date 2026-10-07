@@ -113,12 +113,12 @@ def profile_ci(fr, names=None, levels=(0.6827, 0.9545), max_expand: int = 30, pr
     for name, iv in out.items():
         parts = []
         for level, (lo, hi) in iv.items():
-            los = "offen" if lo is None else f"{lo:.6g}"
-            his = "offen" if hi is None else f"{hi:.6g}"
+            los = "open" if lo is None else f"{lo:.6g}"
+            his = "open" if hi is None else f"{hi:.6g}"
             parts.append(f"{100 * level:.2f} %: [{los}, {his}]")
         summary.append(f"{name} = {fr.params[name].value:.6g}:  " + "   ".join(parts))
-    mode = ("Δχ² = χ²₁-Quantil (σ bekannt)" if not scaled else "F-Test-Schwelle (σ aus Residuen)")
-    summary.append(f"Schwelle: {mode}; 'offen' = Intervall durch Bound/flaches Profil nicht geschlossen")
+    mode = ("Δχ² = χ²₁ quantile (σ known)" if not scaled else "F-test threshold (σ from residuals)")
+    summary.append(f"Threshold: {mode}; 'open' = interval not closed (bound or flat profile)")
     result = {"intervals": {k: {str(l): v for l, v in iv.items()} for k, iv in out.items()},
               "threshold": mode, "summary": summary}
     fr.extra["profile_ci"] = result
@@ -164,8 +164,8 @@ def bootstrap(fr, n_samples: int = 500, kind: str = "residual", seed: int | None
             progress(b + 1, n_samples)
     arr = np.array(samples)
     res = {"kind": kind, "n": int(len(arr)), "failures": failures, "params": {}, "derived": {}}
-    summary = [f"{'Residuen' if kind == 'residual' else 'Wild (Rademacher)'}-Bootstrap, "
-               f"{len(arr)} erfolgreiche Wiederholungen, {failures} Fehlschläge"]
+    summary = [f"{'Residual' if kind == 'residual' else 'Wild (Rademacher)'} bootstrap, "
+               f"{len(arr)} successful replicates, {failures} failures"]
 
     def describe(vals):
         q = np.percentile(vals, [2.5, 15.865, 50, 84.135, 97.5])
@@ -200,7 +200,7 @@ def mcmc(fr, steps: int = 3000, burn: int = 1000, thin: int = 10, nwalkers: int 
     try:
         import emcee  # noqa: F401
     except ImportError as exc:
-        raise RuntimeError("MCMC benötigt das Paket 'emcee' (pip install emcee)") from exc
+        raise RuntimeError("MCMC requires the package 'emcee' (pip install emcee)") from exc
     it = fr._internals
     model, x, y, w, variables = it["model"], it["x"], it["y"], it["w"], it.get("variables")
     best = it["best_params"].copy()
@@ -222,10 +222,10 @@ def mcmc(fr, steps: int = 3000, burn: int = 1000, thin: int = 10, nwalkers: int 
     out = {"params": {}, "derived": {}, "n_samples": int(arr.shape[0]), "nwalkers": walkers,
            "acceptance": float(np.mean(res.acceptance_fraction)), "is_weighted": is_weighted}
     acor = getattr(res, "acor", None)
-    summary = [f"emcee: {walkers} Walker, {steps} Schritte (Burn-in {burn}, Ausdünnung {thin}), "
-               f"{arr.shape[0]} Stichproben, Akzeptanz {out['acceptance']:.2f}; flache Priors in den Grenzen"]
+    summary = [f"emcee: {walkers} walkers, {steps} steps (burn-in {burn}, thinning {thin}), "
+               f"{arr.shape[0]} samples, acceptance fraction {out['acceptance']:.2f}; flat priors within the bounds"]
     if note.getvalue().strip():
-        summary.append("Hinweis: Kette evtl. zu kurz für verlässliche Autokorrelationszeiten – mehr Schritte.")
+        summary.append("Note: chain possibly too short for reliable autocorrelation times – use more steps.")
         out["warning"] = note.getvalue().strip()
     for j, name in enumerate(cols):
         v = np.percentile(arr[:, j], q)
@@ -233,7 +233,7 @@ def mcmc(fr, steps: int = 3000, burn: int = 1000, thin: int = 10, nwalkers: int 
         if acor is not None and j < len(acor):
             d["autocorr_time"] = float(acor[j])
         out["params"][name] = d
-        summary.append(f"{name}: Median {v[2]:.6g}, 68 % [{v[1]:.6g}, {v[3]:.6g}], 95 % [{v[0]:.6g}, {v[4]:.6g}]"
+        summary.append(f"{name}: median {v[2]:.6g}, 68 % [{v[1]:.6g}, {v[3]:.6g}], 95 % [{v[0]:.6g}, {v[4]:.6g}]"
                        + (f", τ_int ≈ {d['autocorr_time']:.0f}" if "autocorr_time" in d else ""))
     peaks = model.peaks
     if peaks:

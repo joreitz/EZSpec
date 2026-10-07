@@ -16,8 +16,10 @@ from ..fit import compare
 from ..fit.compare import ComparisonError
 from ..io import read_spectra, sniff
 from ..io.text import parse_table
+from ..models.formula import variable_name
 from ..project import Dataset
 from .param_form import SciEdit
+from .theme import COMPONENT_COLORS
 
 # ============================================================================ import
 
@@ -26,7 +28,7 @@ class ImportDialog(QtWidgets.QDialog):
     def __init__(self, path, parent=None):
         super().__init__(parent)
         self.path = Path(path)
-        self.setWindowTitle(f"Importieren – {self.path.name}")
+        self.setWindowTitle(f"Import – {self.path.name}")
         self.info = sniff(self.path)
         lay = QtWidgets.QVBoxLayout(self)
         self.datasets = []
@@ -34,8 +36,8 @@ class ImportDialog(QtWidgets.QDialog):
             specs = read_spectra(self.path)
             s = specs[0]
             j = s.meta.get("jcamp", {})
-            text = (f"<b>JCAMP-DX</b> · {j.get('TITLE', '')}<br>Datentyp: {j.get('DATATYPE', '?')} · "
-                    f"{s.n} Punkte · x: {j.get('XUNITS', '?')} · y: {j.get('YUNITS', '?')}")
+            text = (f"<b>JCAMP-DX</b> · {j.get('TITLE', '')}<br>Data type: {j.get('DATATYPE', '?')} · "
+                    f"{s.n} points · x: {j.get('XUNITS', '?')} · y: {j.get('YUNITS', '?')}")
             for w in s.meta.get("import_warnings", []):
                 text += f"<br><span style='color:#b36b00'>⚠ {w}</span>"
             lay.addWidget(QtWidgets.QLabel(text))
@@ -44,14 +46,14 @@ class ImportDialog(QtWidgets.QDialog):
             self._jcamp = None
             top = QtWidgets.QFormLayout()
             self.delim = QtWidgets.QComboBox()
-            for label, val in (("automatisch", "auto"), ("Tab", "\t"), ("Semikolon ;", ";"), ("Komma ,", ","),
-                               ("Leerraum", None)):
+            for label, val in (("automatic", "auto"), ("Tab", "\t"), ("Semicolon ;", ";"), ("Comma ,", ","),
+                               ("Whitespace", None)):
                 self.delim.addItem(label, val)
             self.decimal = QtWidgets.QComboBox()
-            for label, val in (("automatisch", "auto"), ("Punkt .", "."), ("Komma ,", ",")):
+            for label, val in (("automatic", "auto"), ("Point .", "."), ("Comma ,", ",")):
                 self.decimal.addItem(label, val)
-            top.addRow("Trennzeichen", self.delim)
-            top.addRow("Dezimalzeichen", self.decimal)
+            top.addRow("Delimiter", self.delim)
+            top.addRow("Decimal separator", self.decimal)
             lay.addLayout(top)
             self.table = QtWidgets.QTableWidget()
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -63,16 +65,16 @@ class ImportDialog(QtWidgets.QDialog):
             self.scol = QtWidgets.QComboBox()
             self.vars = QtWidgets.QListWidget()
             self.vars.setMaximumHeight(80)
-            self.vars.setToolTip("weitere unabhängige Variablen für Formeln mit mehreren Prädiktoren")
+            self.vars.setToolTip("Additional independent variables for formulas with several predictors")
             self.unit = QtWidgets.QComboBox()
-            self.unit.addItem("(keine/unbekannt)", "")
+            self.unit.addItem("(none/unknown)", "")
             for k, v in U.UNITS.items():
                 self.unit.addItem(v, k)
-            cols.addRow("x-Spalte", self.xcol)
-            cols.addRow("y-Spalte(n)", self.ycols)
-            cols.addRow("σ-Spalte (optional)", self.scol)
-            cols.addRow("zusätzl. Variablen", self.vars)
-            cols.addRow("x-Einheit", self.unit)
+            cols.addRow("x column", self.xcol)
+            cols.addRow("y column(s)", self.ycols)
+            cols.addRow("σ column (optional)", self.scol)
+            cols.addRow("Extra variables", self.vars)
+            cols.addRow("x unit", self.unit)
             lay.addLayout(cols)
             self.status = QtWidgets.QLabel()
             self.status.setObjectName("hint")
@@ -123,9 +125,9 @@ class ImportDialog(QtWidgets.QDialog):
             self.ycols.item(0).setCheckState(QtCore.Qt.Checked)
         guess = guess_unit(t.header[0]) if t.header else ""
         self.unit.setCurrentIndex(max(self.unit.findData(guess), 0))
-        self.status.setText(f"{n} Datenzeilen, {m} Spalten, {t.n_header_lines} Kopfzeilen, "
-                            f"{t.skipped} übersprungen · Trennzeichen "
-                            f"{'Leerraum' if t.delimiter is None else repr(t.delimiter)} · Dezimal {t.decimal!r}")
+        self.status.setText(f"{n} data rows, {m} columns, {t.n_header_lines} header lines, "
+                            f"{t.skipped} skipped · delimiter "
+                            f"{'whitespace' if t.delimiter is None else repr(t.delimiter)} · decimal {t.decimal!r}")
 
     def _accept(self):
         try:
@@ -134,12 +136,14 @@ class ImportDialog(QtWidgets.QDialog):
             else:
                 x = self.xcol.currentData()
                 s = self.scol.currentData()
-                extra = {self.vars.item(j).text().replace(" ", "_"): j for j in range(self.vars.count())
-                         if self.vars.item(j).checkState() == QtCore.Qt.Checked and j != x}
+                extra = {}
+                for j in range(self.vars.count()):
+                    if self.vars.item(j).checkState() == QtCore.Qt.Checked and j != x:
+                        extra[variable_name(self.vars.item(j).text(), extra)] = j
                 ys = [j for j in range(self.ycols.count()) if self.ycols.item(j).checkState() == QtCore.Qt.Checked
                       and j not in (x, s) and j not in extra.values()]
                 if not ys and self.tinfo.data.shape[1] > 1:
-                    raise ValueError("keine y-Spalte gewählt")
+                    raise ValueError("no y column selected")
                 specs = read_spectra(self.path, x_col=x, y_cols=ys or None, sigma_col=s,
                                      delimiter=self.tinfo.delimiter, decimal=self.tinfo.decimal,
                                      x_unit=self.unit.currentData(), extra_cols=extra or None)
@@ -155,7 +159,7 @@ class ImportDialog(QtWidgets.QDialog):
 # ============================================================================ figure editor
 class SetPathCommand(QUndoCommand):
     def __init__(self, dlg, path, old, new):
-        super().__init__(f"Figur: {path}")
+        super().__init__(f"Figure: {path}")
         self.dlg, self.path, self.old, self.new = dlg, path, old, new
 
     def redo(self):
@@ -175,7 +179,7 @@ class FigureDialog(QtWidgets.QDialog):
 
     def __init__(self, ds, spec=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Abbildung – {ds.name}")
+        self.setWindowTitle(f"Figure – {ds.name}")
         self.ds = ds
         run = ds.run_pipeline()
         self.processed = run.final
@@ -195,7 +199,7 @@ class FigureDialog(QtWidgets.QDialog):
         lv = QtWidgets.QVBoxLayout(left)
         form = QtWidgets.QFormLayout()
         self.preset = QtWidgets.QComboBox()
-        self.preset.addItem("(benutzerdefiniert)", "custom")
+        self.preset.addItem("(custom)", "custom")
         for k, p in PRESETS.items():
             self.preset.addItem(p["title"], k)
         self.preset.setToolTip(PRESET_NOTE)
@@ -210,13 +214,13 @@ class FigureDialog(QtWidgets.QDialog):
         self.lw.setRange(0.2, 5)
         self.lw.setSingleStep(0.1)
         self.panel_labels = QtWidgets.QCheckBox("(a), (b) …")
-        form.addRow("Vorlage", self.preset)
-        form.addRow("Breite / mm", self.width)
-        form.addRow("Höhe / mm", self.height)
-        form.addRow("Schrift / pt", self.font)
-        form.addRow("Schriftart", self.family)
-        form.addRow("Linienbreite / pt", self.lw)
-        form.addRow("Panel-Label", self.panel_labels)
+        form.addRow("Template", self.preset)
+        form.addRow("Width / mm", self.width)
+        form.addRow("Height / mm", self.height)
+        form.addRow("Font size / pt", self.font)
+        form.addRow("Font family", self.family)
+        form.addRow("Line width / pt", self.lw)
+        form.addRow("Panel labels", self.panel_labels)
         lv.addLayout(form)
         note = QtWidgets.QLabel(PRESET_NOTE)
         note.setObjectName("hint")
@@ -230,19 +234,19 @@ class FigureDialog(QtWidgets.QDialog):
         self.ylabel = QtWidgets.QLineEdit()
         self.legend = QtWidgets.QComboBox()
         for v in self.LEGEND:
-            self.legend.addItem("keine" if v is None else v, v)
-        self.invert = QtWidgets.QCheckBox("x invertieren")
-        self.ylog = QtWidgets.QCheckBox("y logarithmisch")
-        self.grid = QtWidgets.QCheckBox("Gitter")
+            self.legend.addItem("none" if v is None else v, v)
+        self.invert = QtWidgets.QCheckBox("Invert x")
+        self.ylog = QtWidgets.QCheckBox("Log y")
+        self.grid = QtWidgets.QCheckBox("Grid")
         self.sec = QtWidgets.QComboBox()
         self.sec.addItem("—", None)
         for k, v in U.UNITS.items():
             self.sec.addItem(v, k)
         self.laser = SciEdit(optional=True)
         self.laser.setPlaceholderText("Laser / nm")
-        pf.addRow("x-Titel", self.xlabel)
-        pf.addRow("y-Titel", self.ylabel)
-        pf.addRow("Legende", self.legend)
+        pf.addRow("x-axis title", self.xlabel)
+        pf.addRow("y-axis title", self.ylabel)
+        pf.addRow("Legend", self.legend)
         checks = QtWidgets.QHBoxLayout()
         for c in (self.invert, self.ylog, self.grid):
             checks.addWidget(c)
@@ -250,10 +254,10 @@ class FigureDialog(QtWidgets.QDialog):
         secrow = QtWidgets.QHBoxLayout()
         secrow.addWidget(self.sec, 1)
         secrow.addWidget(self.laser)
-        pf.addRow("2. x-Achse", secrow)
+        pf.addRow("Secondary x axis", secrow)
         lv.addLayout(pf)
         self.traces = QtWidgets.QTableWidget(0, 4)
-        self.traces.setHorizontalHeaderLabels(["an", "Kurve", "Legende", "Farbe"])
+        self.traces.setHorizontalHeaderLabels(["on", "Curve", "Legend", "Color"])
         self.traces.verticalHeader().setVisible(False)
         self.traces.horizontalHeader().setStretchLastSection(True)
         self.traces.setColumnWidth(0, 28)
@@ -262,7 +266,7 @@ class FigureDialog(QtWidgets.QDialog):
         lv.addWidget(self.traces, 1)
         self.params = QtWidgets.QListWidget()
         self.params.setMaximumHeight(100)
-        self.params.setToolTip("Parameter für das Textfeld im Hauptpanel")
+        self.params.setToolTip("Parameters shown in the text box of the main panel")
         if res is not None:
             names = list(res.params) + [f"{d.component}.{d.name}" for d in res.derived]
             for n in names:
@@ -270,20 +274,20 @@ class FigureDialog(QtWidgets.QDialog):
                 it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
                 it.setCheckState(QtCore.Qt.Unchecked)
                 self.params.addItem(it)
-        lv.addWidget(QtWidgets.QLabel("Parameterbox:"))
+        lv.addWidget(QtWidgets.QLabel("Parameter box:"))
         lv.addWidget(self.params)
         btns = QtWidgets.QHBoxLayout()
         ub = QtWidgets.QPushButton("↶")
-        ub.setToolTip("Rückgängig")
+        ub.setToolTip("Undo")
         ub.clicked.connect(self.undo.undo)
         rb = QtWidgets.QPushButton("↷")
-        rb.setToolTip("Wiederholen")
+        rb.setToolTip("Redo")
         rb.clicked.connect(self.undo.redo)
         ex = QtWidgets.QPushButton("Export…")
         ex.setObjectName("primary")
         ex.setMinimumWidth(90)
         ex.clicked.connect(self._export)
-        ok = QtWidgets.QPushButton("Übernehmen")
+        ok = QtWidgets.QPushButton("Apply")
         ok.clicked.connect(self.accept)
         for b in (ub, rb, ex, ok):
             btns.addWidget(b)
@@ -298,7 +302,7 @@ class FigureDialog(QtWidgets.QDialog):
         self.preview.setStyleSheet("QScrollArea { background: #8a8f98; }")
         right = QtWidgets.QVBoxLayout()
         self.zoom = QtWidgets.QComboBox()
-        for z in ("100 % (physische Größe)", "150 %", "200 %"):
+        for z in ("100 % (physical size)", "150 %", "200 %"):
             self.zoom.addItem(z)
         self.zoom.currentIndexChanged.connect(lambda: self._timer.start())
         right.addWidget(self.zoom)
@@ -347,7 +351,7 @@ class FigureDialog(QtWidgets.QDialog):
         if self._loading or key == "custom":
             return
         p = PRESETS[key]
-        self.undo.beginMacro(f"Vorlage {p['title']}")
+        self.undo.beginMacro(f"Template {p['title']}")
         self._set("preset", key)
         self._set("width_mm", p["width_mm"])
         self._set("height_mm", p["height_mm"])
@@ -384,7 +388,7 @@ class FigureDialog(QtWidgets.QDialog):
             return
         base = f"panels.{self._panel()}.traces.{row}"
         cur = get_path(self.spec, base + ".color") or "#000000"
-        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(cur), self, "Farbe")
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(cur), self, "Color")
         if c.isValid():
             self._set(base + ".color", c.name())
 
@@ -407,7 +411,7 @@ class FigureDialog(QtWidgets.QDialog):
             idx = self._panel()
             self.panel_sel.clear()
             for i, p in enumerate(s["panels"]):
-                self.panel_sel.addItem(f"Panel {i + 1}" + (" (Haupt)" if i == 0 else " (Residuen)" if i == 1 else ""))
+                self.panel_sel.addItem(f"Panel {i + 1}" + (" (main)" if i == 0 else " (residuals)" if i == 1 else ""))
             self.panel_sel.setCurrentIndex(min(idx, len(s["panels"]) - 1))
         finally:
             self._loading = False
@@ -443,7 +447,7 @@ class FigureDialog(QtWidgets.QDialog):
                     qc = QtGui.QColor(t["color"])
                     col.setBackground(qc)
                     col.setForeground(QtGui.QColor("white" if qc.lightness() < 128 else "black"))
-                col.setToolTip("Doppelklick: Farbe wählen")
+                col.setToolTip("Double-click: choose color")
                 self.traces.setItem(i, 3, col)
         finally:
             self._loading = False
@@ -453,7 +457,7 @@ class FigureDialog(QtWidgets.QDialog):
         try:
             fig = render_figure(self.spec, make_resolver(self.curves))
         except Exception as e:  # noqa: BLE001
-            lab = QtWidgets.QLabel(f"Fehler beim Rendern: {e}")
+            lab = QtWidgets.QLabel(f"Rendering failed: {e}")
             lab.setWordWrap(True)
             self.preview.setWidget(lab)
             return
@@ -467,7 +471,7 @@ class FigureDialog(QtWidgets.QDialog):
 
     def _export(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Abbildung exportieren", f"{self.ds.name}.pdf",
+            self, "Export figure", f"{self.ds.name}.pdf",
             "PDF (*.pdf);;SVG (*.svg);;PNG (*.png);;PGF/LaTeX (*.pgf);;EPS (*.eps)")
         if not path:
             return
@@ -476,14 +480,14 @@ class FigureDialog(QtWidgets.QDialog):
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.warning(self, "Export", str(e))
             return
-        QtWidgets.QMessageBox.information(self, "Export", f"Gespeichert: {path}")
+        QtWidgets.QMessageBox.information(self, "Export", f"Saved: {path}")
 
 
 # ============================================================================ comparison
 class CompareDialog(QtWidgets.QDialog):
     def __init__(self, results: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Modellvergleich")
+        self.setWindowTitle("Model comparison")
         lay = QtWidgets.QVBoxLayout(self)
         try:
             c = compare(results)
@@ -492,7 +496,7 @@ class CompareDialog(QtWidgets.QDialog):
             c = None
         if c is not None:
             t = QtWidgets.QTableWidget(len(c["rows"]), 6)
-            t.setHorizontalHeaderLabels(["Modell", "K", f"Δ{c['rows'][0]['criterion']}", "Akaike-Gewicht",
+            t.setHorizontalHeaderLabels(["Model", "K", f"Δ{c['rows'][0]['criterion']}", "Akaike weight",
                                          "ΔBIC", "χ²_ν / s"])
             for i, r in enumerate(c["rows"]):
                 vals = [r["model"], str(r["k"]), f"{r['delta_aic']:.2f}", f"{r['akaike_weight']:.3f}",
@@ -502,13 +506,13 @@ class CompareDialog(QtWidgets.QDialog):
                     t.setItem(i, j, QtWidgets.QTableWidgetItem(v))
             t.resizeColumnsToContents()
             lay.addWidget(t)
-            note = QtWidgets.QLabel(c["note"] + "\nForm: " + c["form"])
+            note = QtWidgets.QLabel(c["note"] + "\nLikelihood form: " + c["form"])
             note.setWordWrap(True)
             note.setObjectName("hint")
             lay.addWidget(note)
         self.results = results
         self._task = None
-        box = QtWidgets.QGroupBox("Verschachtelter Test „eine Komponente mehr“ (Simulation)")
+        box = QtWidgets.QGroupBox("Nested-model test “one more component” (simulation)")
         form = QtWidgets.QFormLayout(box)
         self.null = QtWidgets.QComboBox()
         self.alt = QtWidgets.QComboBox()
@@ -520,16 +524,16 @@ class CompareDialog(QtWidgets.QDialog):
         self.n_sim = QtWidgets.QSpinBox()
         self.n_sim.setRange(20, 5000)
         self.n_sim.setValue(200)
-        run = QtWidgets.QPushButton("Simulation starten")
+        run = QtWidgets.QPushButton("Run simulation")
         run.clicked.connect(self._run_test)
         self.bar = QtWidgets.QProgressBar()
-        self.out = QtWidgets.QLabel("Der nominelle LRT/F-Test ist am Parameterrand (Amplitude = 0) ungültig; "
-                                    "die p-Wert-Verteilung wird deshalb durch Simulation unter dem Nullmodell "
-                                    "bestimmt.")
+        self.out = QtWidgets.QLabel("The nominal LRT/F-test is invalid at the parameter boundary (amplitude = 0); "
+                                    "the null distribution of the test statistic is therefore obtained by "
+                                    "simulation under the null model (parametric bootstrap).")
         self.out.setWordWrap(True)
-        form.addRow("Nullmodell", self.null)
+        form.addRow("Null model", self.null)
         form.addRow("Alternative", self.alt)
-        form.addRow("Replikate", self.n_sim)
+        form.addRow("Replicates", self.n_sim)
         form.addRow(run, self.bar)
         form.addRow(self.out)
         lay.addWidget(box)
@@ -566,12 +570,12 @@ class BootstrapDialog(QtWidgets.QDialog):
         self.n.setRange(50, 20000)
         self.n.setValue(500)
         self.kind = QtWidgets.QComboBox()
-        self.kind.addItem("Residuen (homoskedastisch)", "residual")
-        self.kind.addItem("Wild/Rademacher (heteroskedastisch)", "wild")
+        self.kind.addItem("Residual resampling (homoscedastic)", "residual")
+        self.kind.addItem("Wild bootstrap, Rademacher (heteroscedastic)", "wild")
         self.seed = QtWidgets.QSpinBox()
         self.seed.setRange(0, 2**31 - 1)
-        form.addRow("Wiederholungen", self.n)
-        form.addRow("Verfahren", self.kind)
+        form.addRow("Replicates", self.n)
+        form.addRow("Method", self.kind)
         form.addRow("Seed", self.seed)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
@@ -586,7 +590,7 @@ class SeriesDialog(QtWidgets.QDialog):
     def __init__(self, state, parent=None):
         import pyqtgraph as pg
         super().__init__(parent)
-        self.setWindowTitle("Serie / globaler Fit")
+        self.setWindowTitle("Series / global fit")
         self.state = state
         self.series = None
         self.global_result = None
@@ -594,7 +598,7 @@ class SeriesDialog(QtWidgets.QDialog):
         cur = state.current()
         lay = QtWidgets.QHBoxLayout(self)
         left = QtWidgets.QVBoxLayout()
-        left.addWidget(QtWidgets.QLabel("Datensätze (Reihenfolge = Index):"))
+        left.addWidget(QtWidgets.QLabel("Datasets (order = index):"))
         self.ds_list = QtWidgets.QListWidget()
         for ds in state.project.datasets:
             it = QtWidgets.QListWidgetItem(ds.name)
@@ -604,17 +608,17 @@ class SeriesDialog(QtWidgets.QDialog):
             self.ds_list.addItem(it)
         left.addWidget(self.ds_list, 1)
         self.mode = QtWidgets.QComboBox()
-        self.mode.addItem("Serie: nacheinander, Startwerte weitergeben", "series")
-        self.mode.addItem("Serie: nacheinander, gleiche Startwerte", "series_fixed")
-        self.mode.addItem("Global: gleichzeitig mit geteilten Parametern", "global")
+        self.mode.addItem("Series: sequential, propagate start values", "series")
+        self.mode.addItem("Series: sequential, same start values", "series_fixed")
+        self.mode.addItem("Global: simultaneous, with shared parameters", "global")
         left.addWidget(self.mode)
-        self.apply_template = QtWidgets.QCheckBox(f"Pipeline + Modell von „{cur.name if cur else ''}“ auf alle "
-                                                  "anwenden")
+        self.apply_template = QtWidgets.QCheckBox(f"Apply pipeline + model of “{cur.name if cur else ''}” to all "
+                                                  "datasets")
         self.apply_template.setChecked(True)
         left.addWidget(self.apply_template)
-        self.index_from_name = QtWidgets.QCheckBox("Index = erste Zahl im Namen (z. B. Temperatur)")
+        self.index_from_name = QtWidgets.QCheckBox("Index = first number in the name (e.g. temperature)")
         left.addWidget(self.index_from_name)
-        left.addWidget(QtWidgets.QLabel("Geteilte Parameter (nur global):"))
+        left.addWidget(QtWidgets.QLabel("Shared parameters (global only):"))
         self.shared = QtWidgets.QListWidget()
         self.shared.setMaximumHeight(130)
         if cur is not None:
@@ -624,7 +628,7 @@ class SeriesDialog(QtWidgets.QDialog):
                 it.setCheckState(QtCore.Qt.Unchecked)
                 self.shared.addItem(it)
         left.addWidget(self.shared)
-        run = QtWidgets.QPushButton("Starten")
+        run = QtWidgets.QPushButton("Start")
         run.setObjectName("primary")
         run.clicked.connect(self.run)
         left.addWidget(run)
@@ -638,7 +642,7 @@ class SeriesDialog(QtWidgets.QDialog):
         self.param = QtWidgets.QComboBox()
         self.param.currentIndexChanged.connect(self._plot)
         row.addWidget(self.param, 1)
-        exp = QtWidgets.QPushButton("CSV exportieren…")
+        exp = QtWidgets.QPushButton("Export CSV…")
         exp.clicked.connect(self._export)
         row.addWidget(exp)
         right.addLayout(row)
@@ -679,21 +683,21 @@ class SeriesDialog(QtWidgets.QDialog):
         cur = self.state.current()
         datasets = self._selected()
         if cur is None or len(datasets) < 2:
-            QtWidgets.QMessageBox.information(self, "Serie", "Mindestens zwei Datensätze wählen.")
+            QtWidgets.QMessageBox.information(self, "Series", "Select at least two datasets.")
             return
         if self.apply_template.isChecked():
             pipe = cur.pipeline.to_dict()
             model = cur.model.to_dict()
             opts = cur.fit_options.to_dict()
-            self.state.undo.beginMacro("Vorlage auf Serie anwenden")
+            self.state.undo.beginMacro("Apply template to series")
             for ds in datasets:
                 if ds is cur:
                     continue
                 self.state.edit("pipeline", lambda p, d=pipe: p.steps.__setitem__(slice(None), type(p).from_dict(d).steps),
-                                "Pipeline übernehmen", ds=ds)
+                                "Copy pipeline", ds=ds)
                 self.state.edit("model", lambda m, d=model: m.components.__setitem__(
-                    slice(None), type(m).from_dict(d).components), "Modell übernehmen", ds=ds)
-                self.state.edit("options", lambda o, d=opts: o.__dict__.update(d), "Optionen übernehmen", ds=ds)
+                    slice(None), type(m).from_dict(d).components), "Copy model", ds=ds)
+                self.state.edit("options", lambda o, d=opts: o.__dict__.update(d), "Copy fit options", ds=ds)
             self.state.undo.endMacro()
         spectra = [self.state.run(ds).final for ds in datasets]
         names = [ds.name for ds in datasets]
@@ -733,7 +737,7 @@ class SeriesDialog(QtWidgets.QDialog):
         def failed(msg):
             self._task = None
             self.progress.setRange(0, 1)
-            QtWidgets.QMessageBox.warning(self, "Serie", msg.split("\n\n")[0])
+            QtWidgets.QMessageBox.warning(self, "Series", msg.split("\n\n")[0])
 
         self._task = start_task(task_fn, done, failed, lambda i, n: self.progress.setValue(i))
 
@@ -771,11 +775,11 @@ class SeriesDialog(QtWidgets.QDialog):
         names = list(res.params)
         self.table.setColumnCount(2)
         self.table.setRowCount(len(names))
-        self.table.setHorizontalHeaderLabels(["Parameter", "Wert ± SE"])
+        self.table.setHorizontalHeaderLabels(["Parameter", "Value ± SE"])
         from ..fit.result import fmt_value
         for i, n in enumerate(names):
             p = res.params[n]
-            self.table.setItem(i, 0, QtWidgets.QTableWidgetItem(n + ("  (geteilt)" if "_d" not in n else "")))
+            self.table.setItem(i, 0, QtWidgets.QTableWidgetItem(n + ("  (shared)" if "_d" not in n else "")))
             self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(fmt_value(p.value, p.stderr)))
         self.table.resizeColumnsToContents()
         self._global_n = len(datasets)
@@ -808,7 +812,7 @@ class SeriesDialog(QtWidgets.QDialog):
     def _export(self):
         if self.series is None and self.global_result is None:
             return
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export", "serie.csv", "CSV (*.csv)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export", "series.csv", "CSV (*.csv)")
         if not path:
             return
         if self.series is not None:
@@ -816,3 +820,390 @@ class SeriesDialog(QtWidgets.QDialog):
         else:
             from ..export.results import write_parameters_csv
             write_parameters_csv(self.global_result, path)
+
+
+# ============================================================================ combine datasets
+class CombineDialog(QtWidgets.QDialog):
+    """Compute a new dataset from several datasets (ratio, difference, parametric x/y)."""
+
+    PRESETS = [("a / b", "x", "a/b"), ("a − b", "x", "a - b"), ("a + b", "x", "a + b"), ("a · b", "x", "a*b"),
+               ("(a/b) as x, c as y", "a/b", "c"), ("b vs. a (parametric)", "a", "b")]
+
+    def __init__(self, state, parent=None):
+        import pyqtgraph as pg
+
+        from ..combine import default_aliases
+        super().__init__(parent)
+        self.setWindowTitle("Combine datasets")
+        self.state = state
+        self.result = None
+        self.report = None
+        ds_list = state.project.datasets
+        aliases = default_aliases(len(ds_list))
+        lay = QtWidgets.QHBoxLayout(self)
+        left = QtWidgets.QVBoxLayout()
+        self.table = QtWidgets.QTableWidget(len(ds_list), 5)
+        self.table.setHorizontalHeaderLabels(["use", "Alias", "Dataset", "N / x range", "σ"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        current = state.current_id
+        for i, ds in enumerate(ds_list):
+            s = ds.processed
+            use = QtWidgets.QTableWidgetItem()
+            use.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
+            use.setCheckState(QtCore.Qt.Checked if len(ds_list) <= 3 or ds.id == current else QtCore.Qt.Unchecked)
+            use.setData(QtCore.Qt.UserRole, ds.id)
+            self.table.setItem(i, 0, use)
+            self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(aliases[i]))
+            for j, txt in ((2, ds.name), (3, f"{s.n} / {s.x.min():.5g} … {s.x.max():.5g}" if s.n else "empty"),
+                           (4, s.sigma_source.label)):
+                it = QtWidgets.QTableWidgetItem(txt)
+                it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
+                self.table.setItem(i, j, it)
+        self.table.resizeColumnsToContents()
+        left.addWidget(self.table, 2)
+        form = QtWidgets.QFormLayout()
+        self.stage = QtWidgets.QComboBox()
+        self.stage.addItem("processed (after pipeline)", "processed")
+        self.stage.addItem("raw data", "raw")
+        self.mode = QtWidgets.QComboBox()
+        for k, v in (("auto", "automatic"), ("exact", "identical x grid"),
+                     ("index", "point by point (acquired simultaneously)"),
+                     ("interpolate", "interpolation onto reference")):
+            self.mode.addItem(v, k)
+        self.ref = QtWidgets.QLineEdit("")
+        self.ref.setPlaceholderText("Alias of the reference (empty = first)")
+        presets = QtWidgets.QHBoxLayout()
+        for title, xe, ye in self.PRESETS:
+            b = QtWidgets.QToolButton()
+            b.setText(title)
+            b.clicked.connect(lambda _=False, xe=xe, ye=ye: (self.xexpr.setText(xe), self.yexpr.setText(ye)))
+            presets.addWidget(b)
+        self.xexpr = QtWidgets.QLineEdit("x")
+        self.yexpr = QtWidgets.QLineEdit("a/b" if len(ds_list) > 1 else "a")
+        for e in (self.xexpr, self.yexpr):
+            e.setToolTip("Names: aliases (y values), x (common x), x_<alias> (x of that dataset); "
+                         "functions as in formulas (exp, log, sqrt, …)")
+        self.xlabel = QtWidgets.QLineEdit()
+        self.ylabel = QtWidgets.QLineEdit()
+        self.name = QtWidgets.QLineEdit()
+        form.addRow("Data stage", self.stage)
+        form.addRow("Alignment", self.mode)
+        form.addRow("Reference", self.ref)
+        form.addRow("Templates", presets)
+        form.addRow("new x =", self.xexpr)
+        form.addRow("new y =", self.yexpr)
+        form.addRow("x-axis title", self.xlabel)
+        form.addRow("y-axis title", self.ylabel)
+        form.addRow("Name", self.name)
+        left.addLayout(form)
+        self.info = QtWidgets.QLabel()
+        self.info.setWordWrap(True)
+        left.addWidget(self.info, 1)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.button(QtWidgets.QDialogButtonBox.Ok).setText("Create as new dataset")
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+        self.ok = bb.button(QtWidgets.QDialogButtonBox.Ok)
+        left.addWidget(bb)
+        lay.addLayout(left, 3)
+        self.pw = pg.PlotWidget()
+        self.pw.showGrid(x=True, y=True, alpha=0.2)
+        lay.addWidget(self.pw, 2)
+        self._timer = QtCore.QTimer(self, singleShot=True, interval=150)
+        self._timer.timeout.connect(self.update_preview)
+        for w in (self.xexpr, self.yexpr, self.ref):
+            w.textChanged.connect(lambda _t: self._timer.start())
+        for w in (self.stage, self.mode):
+            w.currentIndexChanged.connect(lambda _i: self._timer.start())
+        self.table.itemChanged.connect(lambda _it: self._timer.start())
+        self.resize(1150, 640)
+        self.update_preview()
+
+    def selection(self) -> dict:
+        out = {}
+        for i in range(self.table.rowCount()):
+            if self.table.item(i, 0).checkState() != QtCore.Qt.Checked:
+                continue
+            ds = self.state.project.get(self.table.item(i, 0).data(QtCore.Qt.UserRole))
+            alias = self.table.item(i, 1).text().strip()
+            out[alias] = ds.processed if self.stage.currentData() == "processed" else ds.raw
+        return out
+
+    def update_preview(self):
+        from ..combine import combine, diagnose_alignment
+        import pyqtgraph as pg
+        self.pw.clear()
+        self.result = None
+        try:
+            sel = self.selection()
+            if not sel:
+                raise ValueError("select at least one dataset")
+            diag = diagnose_alignment(list(sel.values()))
+            out, rep = combine(sel, self.xexpr.text(), self.yexpr.text(), self.mode.currentData(),
+                               self.ref.text().strip() or None, self.xlabel.text(), self.ylabel.text(),
+                               self.name.text())
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            self.info.setText(f"<span style='color:#b3261e'>✖ {e}</span>")
+            self.ok.setEnabled(False)
+            return
+        self.result, self.report = out, rep
+        lines = [f"<b>Alignment (auto-detected):</b> {diag['text']}" if self.mode.currentData() == "auto"
+                 else f"<b>Alignment:</b> {rep['alignment']}",
+                 f"<b>Result:</b> {rep['n_output']} of {rep['n_input']} points · σ: "
+                 f"{'propagated (' + out.sigma_source.label + ')' if out.sigma is not None else 'none'}"
+                 f"{' · σ_x available' if 'sigma_x' in out.aux else ''}"]
+        lines += [f"<span style='color:#b36b00'>⚠ {w}</span>" for w in rep["warnings"]]
+        self.info.setText("<br>".join(lines))
+        self.ok.setEnabled(out.n > 1)
+        scatter = out.meta.get("plot_style") == "scatter"
+        if out.sigma is not None and out.n < 3000:
+            self.pw.addItem(pg.ErrorBarItem(x=out.x, y=out.y, height=2 * out.sigma, pen=pg.mkPen("#9db6e0")))
+        self.pw.plot(out.x, out.y, pen=None if scatter else pg.mkPen("#2b2b2b"),
+                     symbol="o" if scatter else None, symbolSize=4, symbolBrush="#2b2b2b", symbolPen=None)
+        self.pw.setLabel("bottom", out.x_label)
+        self.pw.setLabel("left", out.y_label)
+
+    def _accept(self):
+        import hashlib
+
+        from ..project import Dataset
+        if self.result is None:
+            return
+        out = self.result
+        name = out.meta.get("name") or "combined"
+        cols = ["x", "y"] + (["sigma"] if out.sigma is not None else [])
+        arrays = [out.x, out.y] + ([out.sigma] if out.sigma is not None else [])
+        if "acq_index" in out.aux:          # rows in acquisition order: the reader restores it on reload
+            o = np.argsort(out.aux["acq_index"], kind="stable")
+            arrays = [a[o] for a in arrays]
+        text = ",".join(cols) + "\n" + "\n".join(",".join(repr(float(v)) for v in row) for row in zip(*arrays)) + "\n"
+        data = text.encode("utf-8")
+        fname = re_safe(name) + ".csv"
+        meta = dict(out.meta)
+        meta["source"] = {"filename": fname, "path": fname, "sha256": hashlib.sha256(data).hexdigest(),
+                          "reader": "text", "options": {"x_col": 0, "y_col": 1,
+                                                        "sigma_col": 2 if out.sigma is not None else None,
+                                                        "delimiter": ",", "decimal": "."}}
+        ds = Dataset(name=name, raw=out.replace(meta=meta), raw_bytes=data, raw_ext=".csv")
+        ds.notes = "derived: x = {x_expr}, y = {y_expr}".format(**out.meta["derived"])
+        self.state.add_dataset(ds)
+        self.accept()
+
+
+def re_safe(name: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "combined"
+
+
+# ============================================================================ calibration
+class CalibrationDialog(QtWidgets.QDialog):
+    """Use a fit y = f(x, v…) (e.g. λ(I, T)) as a calibration of the x axis of other datasets."""
+
+    def __init__(self, state, sources, source=None, target=None, parent=None):
+        import pyqtgraph as pg
+        super().__init__(parent)
+        self.setWindowTitle("Apply fit as x calibration")
+        self.state = state
+        self.params = None
+        self.targets = []
+        self._preselect = target.id if target is not None else None
+        lay = QtWidgets.QHBoxLayout(self)
+        left = QtWidgets.QVBoxLayout()
+        top = QtWidgets.QFormLayout()
+        self.src_combo = QtWidgets.QComboBox()
+        for d in sources:
+            self.src_combo.addItem(d.name, d.id)
+        if source is not None:
+            self.src_combo.setCurrentIndex(max(self.src_combo.findData(source.id), 0))
+        self.src_combo.setToolTip("Dataset with the calibration fit (e.g. λ vs. I at several T)")
+        top.addRow("Calibration from", self.src_combo)
+        left.addLayout(top)
+        self.info = QtWidgets.QLabel()
+        self.info.setWordWrap(True)
+        left.addWidget(self.info)
+        self.var_box = QtWidgets.QWidget()
+        self.var_form = QtWidgets.QFormLayout(self.var_box)
+        self.var_form.setContentsMargins(0, 0, 0, 0)
+        left.addWidget(self.var_box)
+        form = QtWidgets.QFormLayout()
+        self.x_label = QtWidgets.QLineEdit()
+        self.x_unit = QtWidgets.QLineEdit()
+        self.density = QtWidgets.QCheckBox("y is a density per unit x (Jacobian factor |dx/dx'|)")
+        form.addRow("New axis title", self.x_label)
+        form.addRow("New unit", self.x_unit)
+        form.addRow("", self.density)
+        left.addLayout(form)
+        left.addWidget(QtWidgets.QLabel("Target datasets (the step “Calibrate x (fit as calibration)” is appended to "
+                                        "their pipeline):"))
+        self.list = QtWidgets.QListWidget()
+        self.list.itemChanged.connect(lambda _it: self._update())
+        left.addWidget(self.list, 1)
+        self.slice_info = QtWidgets.QLabel()
+        self.slice_info.setWordWrap(True)
+        self.slice_info.setObjectName("hint")
+        left.addWidget(self.slice_info)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        self.ok = bb.button(QtWidgets.QDialogButtonBox.Ok)
+        self.ok.setText("Apply")
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+        left.addWidget(bb)
+        lay.addLayout(left, 1)
+        self.pw = pg.PlotWidget()
+        self.pw.setBackground("w")
+        self.pw.showGrid(x=True, y=True, alpha=0.15)
+        self.pw.addLegend(offset=(10, 10))
+        lay.addWidget(self.pw, 1)
+        self.resize(1000, 620)
+        self.src_combo.currentIndexChanged.connect(lambda _i: self._set_source())
+        self._set_source()
+
+    def _set_source(self):
+        from ..calibration import Calibration, calibration_from_fit
+        ds = self.state.project.get(self.src_combo.currentData())
+        self.source = ds
+        r = ds.fit_result
+        s = self.state.run(ds).final
+        self.cal_dict = calibration_from_fit(r, s, ds.name)
+        self.cal = Calibration(self.cal_dict)
+        dom = self.cal_dict["domain"]
+        head = (f"{self.cal_dict['expression']}<br>{self.cal_dict['n_points']} points · " +
+                " · ".join(f"{k} ∈ [{a:.6g}, {b:.6g}]" for k, (a, b) in dom.items()) +
+                f"<br>RMS of residuals: {self.cal_dict['rms_residual']:.3g} {s.y_unit}"
+                f" · covariance: {self.cal_dict['covariance_mode']}")
+        for w in r.warnings:
+            if w.severity in ("warning", "error"):
+                head += f"<br><span style='color:#b36b00'>⚠ {w.code}: {w.message}</span>"
+        self.info.setText(head)
+        while self.var_form.rowCount():
+            self.var_form.removeRow(0)
+        self.fixed_edits, self.sigma_edits = {}, {}
+        for v in self.cal.variables:
+            row = QtWidgets.QWidget()
+            hl = QtWidgets.QHBoxLayout(row)
+            hl.setContentsMargins(0, 0, 0, 0)
+            e = SciEdit(float(f"{np.median(s.aux[f'var:{v}']):.4g}"), optional=True)
+            e.setToolTip(f"Fixed value of {v} for the slice (empty: column {v} of the target data, point by point)")
+            se = SciEdit(None, optional=True)
+            se.setToolTip(f"Standard uncertainty of {v} (e.g. controller accuracy) – systematic contribution")
+            hl.addWidget(e, 2)
+            hl.addWidget(QtWidgets.QLabel("± σ"))
+            hl.addWidget(se, 1)
+            self.var_form.addRow(f"{v} =", row)
+            self.fixed_edits[v], self.sigma_edits[v] = e, se
+            e.valueEdited.connect(lambda _v: self._update())
+            se.valueEdited.connect(lambda _v: self._update())
+        self.x_label.setText(self.cal_dict.get("y_label") or "")
+        self.x_unit.setText(self.cal_dict.get("y_unit") or "")
+        checked = {t.id for t in self.checked_targets()} if self.list.count() else set()
+        if self._preselect:
+            checked.add(self._preselect)
+        self.list.blockSignals(True)
+        self.list.clear()
+        others = [o for o in self.state.project.datasets if o.id != ds.id]
+        for other in others:
+            it = QtWidgets.QListWidgetItem(other.name)
+            it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+            on = other.id in checked or (len(others) == 1 and not checked)
+            it.setCheckState(QtCore.Qt.Checked if on else QtCore.Qt.Unchecked)
+            it.setData(QtCore.Qt.UserRole, other.id)
+            self.list.addItem(it)
+        self.list.blockSignals(False)
+        self._update()
+
+    # ------------------------------------------------------------------ helpers
+    def fixed_values(self) -> dict:
+        return {v: e.value() for v, e in self.fixed_edits.items() if e.value() is not None}
+
+    def fixed_sigmas(self) -> dict:
+        return {v: e.value() for v, e in self.sigma_edits.items() if e.value() is not None}
+
+    def checked_targets(self) -> list:
+        out = []
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.checkState() == QtCore.Qt.Checked:
+                out.append(self.state.project.get(it.data(QtCore.Qt.UserRole)))
+        return out
+
+    def make_params(self) -> dict:
+        fmt = lambda d: "; ".join(f"{k}={v:.10g}" for k, v in d.items())  # noqa: E731
+        return {"calibration": self.cal_dict, "fixed": fmt(self.fixed_values()),
+                "fixed_sigma": fmt(self.fixed_sigmas()), "x_label": self.x_label.text().strip(),
+                "x_unit": self.x_unit.text().strip(), "spectral_density": self.density.isChecked()}
+
+    def _update(self):
+        import pyqtgraph as pg
+
+        from ..slices import slice_curves
+        self.pw.clear()
+        vals = self.fixed_values()
+        missing = [v for v in self.cal.variables if v not in vals]
+        lines = []
+        lo, hi = self.cal_dict["domain"]["x"]
+        if not missing:
+            xs = np.linspace(lo, hi, 300)
+            try:
+                f = self.cal.evaluate(xs, vals)
+                sig = self.cal.sigma(xs, vals)
+                if sig is not None:
+                    for v, sv in self.fixed_sigmas().items():
+                        sig = np.sqrt(sig ** 2 + (self.cal.partial(v, xs, vals) * sv) ** 2)
+                    up = pg.PlotDataItem(xs, f + 2 * sig, pen=pg.mkPen("#bd1f01", width=0.5))
+                    dn = pg.PlotDataItem(xs, f - 2 * sig, pen=pg.mkPen("#bd1f01", width=0.5))
+                    self.pw.addItem(up)
+                    self.pw.addItem(dn)
+                    self.pw.addItem(pg.FillBetweenItem(up, dn, brush=pg.mkBrush(189, 31, 1, 50)))
+                self.pw.plot(xs, f, pen=pg.mkPen("#bd1f01", width=2),
+                             name="Slice " + ", ".join(f"{k}={v:g}" for k, v in vals.items()))
+                lines.append(self.cal.describe_slice(vals))
+                if sig is not None:
+                    lines.append(f"Band: ±2σ_cal (σ_cal = {sig.min():.3g} … {sig.max():.3g}, systematic – "
+                                 "fully correlated across all points)")
+            except Exception as e:  # noqa: BLE001
+                lines.append(f"✖ {e}")
+        src = self.state.run(self.source).final
+        model = self.source.fit_result._internals.get("model")
+        for i, sl in enumerate(slice_curves(src, model, self.source.fit_result.values)[:12]):
+            self.pw.plot(sl["x"], sl["y"], pen=None, symbol="o", symbolSize=4, symbolPen=None,
+                         symbolBrush=pg.mkColor(COMPONENT_COLORS[i % len(COMPONENT_COLORS)]),
+                         name=sl["label"])
+        self.pw.setLabel("bottom", f"{src.x_label} {('/ ' + src.x_unit) if src.x_unit else ''}")
+        self.pw.setLabel("left", f"{src.y_label} {('/ ' + src.y_unit) if src.y_unit else ''}")
+        targets = self.checked_targets()
+        for t in targets:
+            ts = self.state.run(t).final
+            if not ts.n:
+                continue
+            tv = {}
+            for v in self.cal.variables:
+                if v in vals:
+                    tv[v] = vals[v]
+                elif f"var:{v}" in ts.aux:
+                    tv[v] = ts.aux[f"var:{v}"]
+            msg = f"<b>{t.name}</b>: x = {ts.x.min():.6g} … {ts.x.max():.6g} {ts.x_unit}"
+            if len(tv) == len(self.cal.variables):
+                n_out = int((~self.cal.inside(ts.x, tv)).sum())
+                if n_out:
+                    msg += f" · <span style='color:#b36b00'>⚠ {n_out} of {ts.n} points outside (extrapolation)</span>"
+                else:
+                    msg += " · within calibrated range"
+            else:
+                msg += " · <span style='color:#c62828'>✖ missing value for " + ", ".join(
+                    v for v in self.cal.variables if v not in tv) + "</span>"
+            cu = self.cal_dict.get("x_unit") or ""
+            if cu and ts.x_unit and cu != ts.x_unit:
+                msg += f" · <span style='color:#b36b00'>⚠ unit {ts.x_unit} ≠ {cu}</span>"
+            lines.append(msg)
+        self.slice_info.setText("<br>".join(lines))
+        self.ok.setEnabled(bool(targets))
+
+    def _accept(self):
+        targets = self.checked_targets()
+        if not targets:
+            return
+        self.params = self.make_params()
+        self.targets = [t.id for t in targets]
+        self.accept()
+

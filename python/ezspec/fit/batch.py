@@ -146,7 +146,7 @@ class GlobalModel:
         for s in self.shared:
             for m in self.models:
                 if s not in m.param_names():
-                    raise ValueError(f"geteilter Parameter {s!r} fehlt in einem Modell")
+                    raise ValueError(f"shared parameter {s!r} is missing in one of the models")
         self._names0 = names0
 
     def name(self, base: str, i: int) -> str:
@@ -219,7 +219,7 @@ class GlobalModel:
         return ["__dataset"]
 
     def describe(self) -> str:
-        lines = [f"Globaler Fit über {len(self.models)} Spektren; geteilt: {', '.join(self.shared) or '—'}"]
+        lines = [f"Global fit over {len(self.models)} spectra; shared: {', '.join(self.shared) or '—'}"]
         for i, m in enumerate(self.models):
             lines += [f"#{i}: " + line for line in m.describe().splitlines()]
         return "\n".join(lines)
@@ -246,9 +246,9 @@ def stack_spectra(spectra) -> Spectrum:
     sources = {s.sigma_source for s in spectra}
     has_sigma = [s.sigma is not None for s in spectra]
     if any(has_sigma) and not all(has_sigma):
-        raise ValueError("entweder alle oder keine Spektren müssen σ haben")
+        raise ValueError("either all spectra or none must have σ")
     if len(sources) > 1:
-        raise ValueError(f"unterschiedliche σ-Quellen: {sorted(s.value for s in sources)}")
+        raise ValueError(f"different σ sources: {sorted(s.value for s in sources)}")
     flags = set()
     for i, s in enumerate(spectra):
         m = s.fit_mask
@@ -269,7 +269,7 @@ def fit_global(spectra, models, shared, options: FitOptions | dict | None = None
     if isinstance(models, Model):
         models = [models.copy() for _ in spectra]
     if len(models) != len(spectra):
-        raise ValueError("ein Modell pro Spektrum nötig")
+        raise ValueError("one model per spectrum required")
     gm = GlobalModel(models, shared)
     opt = options if isinstance(options, FitOptions) else FitOptions.from_dict(options)
     if opt.x_range:

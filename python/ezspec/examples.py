@@ -32,7 +32,7 @@ def raman_example(seed: int = 7, n: int = 1500, spike: bool = True) -> Spectrum:
     if spike:
         y[int(0.63 * n)] += 250.0
     return Spectrum(x, y, x_unit="raman", y_unit="counts", x_label="Raman shift (cm⁻¹)", y_label="Intensity",
-                    meta={"name": "Beispiel: Raman (synthetisch)", "truth": "ezspec.examples.RAMAN_TRUTH"})
+                    meta={"name": "Example: Raman (synthetic)", "truth": "ezspec.examples.RAMAN_TRUTH"})
 
 
 def decay_example(seed: int = 3, n: int = 200) -> Spectrum:
@@ -41,7 +41,7 @@ def decay_example(seed: int = 3, n: int = 200) -> Spectrum:
     t = np.linspace(0.0, 60.0, n)
     lam = 5.0 + 800.0 * np.exp(-t / 2.0) + 200.0 * np.exp(-t / 15.0)
     return Spectrum(t, rng.poisson(lam).astype(float), x_unit="", y_unit="counts", x_label="t (ns)",
-                    y_label="Counts", meta={"name": "Beispiel: Abklingkurve (Poisson)"})
+                    y_label="Counts", meta={"name": "Example: decay curve (Poisson)"})
 
 
 def to_csv_bytes(s: Spectrum) -> bytes:

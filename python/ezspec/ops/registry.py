@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -25,7 +26,7 @@ from ..spectrum import Spectrum
 @dataclass(frozen=True)
 class ParamSpec:
     name: str
-    kind: str              # float | log_float | int | bool | choice | str | range | ranges | anchors
+    kind: str              # float | log_float | int | bool | choice | str | range | ranges | anchors | dict
     default: Any = None
     label: str = ""
     min: float | None = None
@@ -89,6 +90,10 @@ class OpSpec:
                 v = [[float(a), float(b)] for a, b in v]
             elif p.kind == "anchors":
                 v = [[float(a), None if b is None else float(b)] for a, b in v]
+            elif p.kind == "dict":
+                if not isinstance(v, dict):
+                    raise ValueError(f"{self.name}: {p.name!r} must be a mapping")
+                v = _copy(v)
             if p.kind in ("float", "log_float", "int"):
                 if p.min is not None and v < p.min:
                     raise ValueError(f"{self.name}: {p.name!r} must be >= {p.min}, got {v}")
@@ -101,6 +106,8 @@ class OpSpec:
 def _copy(v):
     if isinstance(v, list):
         return [_copy(a) for a in v]
+    if isinstance(v, dict):
+        return {k: _copy(a) for k, a in v.items()}
     return v
 
 
@@ -175,6 +182,17 @@ def pop_warnings(s: Spectrum) -> tuple[Spectrum, list[str]]:
     return s.replace(meta=meta), list(w)
 
 
+def _py_literal(v) -> str:
+    """repr that stays valid Python for non-finite floats inside containers."""
+    if isinstance(v, float) and not math.isfinite(v):
+        return f"float({str(v)!r})"
+    if isinstance(v, list):
+        return "[" + ", ".join(_py_literal(a) for a in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{k!r}: {_py_literal(a)}" for k, a in v.items()) + "}"
+    return repr(v)
+
+
 @dataclass
 class OpCall:
     """A concrete call; used by the script generator."""
@@ -182,5 +200,5 @@ class OpCall:
     params: dict = field(default_factory=dict)
 
     def code(self, var: str = "s") -> str:
-        args = ", ".join(f"{k}={v!r}" for k, v in self.params.items())
+        args = ", ".join(f"{k}={_py_literal(v)}" for k, v in self.params.items())
         return f"{var} = ops.{self.name}({var}{', ' if args else ''}{args})"

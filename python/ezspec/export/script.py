@@ -38,7 +38,7 @@ def generate_script(dataset, raw_path=None, figure_spec: dict | None = None, out
     if raw_path is None:
         raw_path = src.get("path") or src.get("filename")
     if not raw_path:
-        raise ValueError("Datensatz hat keine Rohdatendatei – zuerst als Datei exportieren")
+        raise ValueError("dataset has no raw data file – export it as a file first")
     sha = src.get("sha256", "")
     stem = out_stem or Path(str(raw_path)).stem + "_ezspec"
     lines = dataset.pipeline.script_lines("s")
@@ -49,10 +49,10 @@ def generate_script(dataset, raw_path=None, figure_spec: dict | None = None, out
 
     out = [
         "#!/usr/bin/env python3",
-        f'"""EZSpec-Analyse »{dataset.name}« – erzeugt {now} mit EZSpec {__version__}.',
+        f'"""EZSpec analysis “{dataset.name}” – generated {now} with EZSpec {__version__}.',
         "",
-        "Reproduziert Verarbeitung, Fit und Abbildung aus den Rohdaten ohne GUI.",
-        "Aufruf:  python <dieses_skript>.py [Rohdatendatei]",
+        "Reproduces processing, fit and figure from the raw data without the GUI.",
+        "Usage:  python <this_script>.py [raw_data_file]",
         '"""',
         "import hashlib",
         "import json",
@@ -67,14 +67,14 @@ def generate_script(dataset, raw_path=None, figure_spec: dict | None = None, out
         f"OUT = Path({stem!r})",
         "",
         "if RAW_SHA256 and hashlib.sha256(RAW.read_bytes()).hexdigest() != RAW_SHA256:",
-        '    raise SystemExit("Rohdaten weichen von der analysierten Datei ab (SHA-256 verschieden)")',
+        '    raise SystemExit("Raw data differ from the analysed file (SHA-256 mismatch)")',
         "",
         f"raw = {_reader_call(raw)}",
         "s = raw",
         "",
-        "# --- Verarbeitung (Pipeline) " + "-" * 40,
+        "# --- Processing (pipeline) " + "-" * 41,
     ]
-    out += lines or ["# (keine Verarbeitungsschritte)"]
+    out += lines or ["# (no processing steps)"]
     out += ["", "print(s)"]
     if has_model:
         out += [
@@ -94,7 +94,7 @@ def generate_script(dataset, raw_path=None, figure_spec: dict | None = None, out
     if figure_spec is not None:
         out += [
             "",
-            "# --- Abbildung " + "-" * 52,
+            "# --- Figure " + "-" * 55,
             "from ezspec.export.figure import curves_for, make_resolver, save_figure",
             "",
             "spec = json.loads(r'''",

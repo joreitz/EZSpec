@@ -25,7 +25,7 @@ from .basic import _in_ranges
 from .registry import ParamSpec as P
 from .registry import operation, warn
 
-_SUBTRACT = P("subtract", "bool", True, "abziehen", help="False: Baseline nur berechnen/anzeigen")
+_SUBTRACT = P("subtract", "bool", True, "Subtract", help="False: only compute/display the baseline")
 
 
 def whittaker_cutoff_points(lam: float, diff_order: int = 2) -> float:
@@ -66,8 +66,8 @@ def _check_overcorrection(s_in: Spectrum, out: Spectrum, b: np.ndarray) -> Spect
     r = s_in.y - b
     frac = float(np.mean(r < -3.0 * np.asarray(sig)))
     if frac > 0.02:
-        out = warn(out, f"Baseline liegt an {100 * frac:.1f} % der Punkte > 3σ über den Daten – "
-                        "Überkorrektur? (schneidet in breite Banden)")
+        out = warn(out, f"Baseline lies > 3σ above the data at {100 * frac:.1f} % of the points – "
+                        "overcorrection? (cuts into broad bands)")
     return out
 
 
@@ -97,13 +97,13 @@ def anchor_values(s: Spectrum, anchors, window: int):
     return np.array(xa), np.array(ya)
 
 
-@operation("baseline_anchors", 1, "Baseline: Ankerpunkte", "Baseline",
-           params=[P("anchors", "anchors", [], "Anker [(x, y|None), ...]"),
+@operation("baseline_anchors", 1, "Baseline: anchor points", "Baseline",
+           params=[P("anchors", "anchors", [], "Anchors [(x, y|None), ...]"),
                    P("interpolation", "choice", "pchip", "Interpolation",
                      choices=("pchip", "akima", "cubic", "linear"),
-                     help="pchip/akima: formerhaltend; cubic: natürlicher Spline (kann überschwingen)"),
-                   P("window", "int", 3, "Median-Fenster ± Punkte (0 = Snap)", min=0),
-                   P("extrapolation", "choice", "constant", "außerhalb der Anker",
+                     help="pchip/akima: shape-preserving; cubic: natural spline (may overshoot)"),
+                   P("window", "int", 3, "Median window ± points (0 = snap)", min=0),
+                   P("extrapolation", "choice", "constant", "Outside the anchors",
                      choices=("constant", "linear")),
                    _SUBTRACT])
 def baseline_anchors(s: Spectrum, anchors, interpolation, window, extrapolation, subtract) -> Spectrum:
@@ -135,8 +135,8 @@ def baseline_anchors(s: Spectrum, anchors, interpolation, window, extrapolation,
               "interpolation": interpolation}
     out = _finish(s, np.asarray(b), subtract, recipe)
     if xa[0] > s.x[0] or xa[-1] < s.x[-1]:
-        out = warn(out, f"Baseline außerhalb der Anker ({extrapolation}) fortgesetzt – "
-                        "an den Rändern schlecht bestimmt.")
+        out = warn(out, f"Baseline extrapolated beyond the anchors ({extrapolation}) – "
+                        "poorly determined at the edges.")
     return out
 
 
@@ -183,11 +183,11 @@ def polynomial_baseline(x, y, order, weights=None, method="fit", tol=1e-3, max_i
     return base, n_iter
 
 
-@operation("baseline_polynomial", 1, "Baseline: Polynom", "Baseline",
-           params=[P("order", "int", 2, "Grad", min=0, max=12),
-                   P("method", "choice", "fit", "Verfahren", choices=("fit", "modpoly", "imodpoly"),
-                     help="fit: LS-Fit (nur in 'ranges'); modpoly/imodpoly: iterativ unter die Daten"),
-                   P("ranges", "ranges", [], "Baseline-Bereiche (leer = alle)"),
+@operation("baseline_polynomial", 1, "Baseline: polynomial", "Baseline",
+           params=[P("order", "int", 2, "Order", min=0, max=12),
+                   P("method", "choice", "fit", "Method", choices=("fit", "modpoly", "imodpoly"),
+                     help="fit: least-squares fit (within 'ranges' only); modpoly/imodpoly: iteratively below the data"),
+                   P("ranges", "ranges", [], "Baseline ranges (empty = all)"),
                    _SUBTRACT])
 def baseline_polynomial(s: Spectrum, order, method, ranges, subtract) -> Spectrum:
     """Polynomial baseline, fitted to marked baseline regions or iteratively."""
@@ -202,11 +202,11 @@ def baseline_polynomial(s: Spectrum, order, method, ranges, subtract) -> Spectru
 
 
 # ============================================================================ Whittaker
-_WH_PARAMS = [P("diff_order", "int", 2, "Differenzenordnung", min=1, max=3),
-              P("max_iter", "int", 50, "max. Iterationen", min=0),
-              P("tol", "float", 1e-3, "Toleranz", min=0.0),
-              P("exclude_ranges", "ranges", [], "ausgeschlossene Bereiche (w = 0)"),
-              P("force_ranges", "ranges", [], "erzwungene Baseline-Bereiche (w = 1)"),
+_WH_PARAMS = [P("diff_order", "int", 2, "Difference order", min=1, max=3),
+              P("max_iter", "int", 50, "Max. iterations", min=0),
+              P("tol", "float", 1e-3, "Tolerance", min=0.0),
+              P("exclude_ranges", "ranges", [], "Excluded ranges (w = 0)"),
+              P("force_ranges", "ranges", [], "Forced baseline ranges (w = 1)"),
               _SUBTRACT]
 
 
@@ -219,13 +219,13 @@ def _whittaker_finish(s, res, subtract, recipe, lam, d):
     aux["baseline_weights"] = np.asarray(w)
     out = out.replace(aux=aux)
     if not converged:
-        out = warn(out, f"{recipe['method']}: nicht konvergiert nach {len(hist)} Iterationen.")
+        out = warn(out, f"{recipe['method']}: not converged after {len(hist)} iterations.")
     return out
 
 
 @operation("baseline_asls", 1, "Baseline: AsLS (Whittaker)", "Baseline",
-           params=[P("lam", "log_float", 1e6, "λ (Glattheit)", min=0.0),
-                   P("p", "float", 1e-2, "Asymmetrie p", min=1e-6, max=0.5)] + _WH_PARAMS)
+           params=[P("lam", "log_float", 1e6, "λ (smoothness)", min=0.0),
+                   P("p", "float", 1e-2, "Asymmetry p", min=1e-6, max=0.5)] + _WH_PARAMS)
 def baseline_asls(s: Spectrum, lam, p, diff_order, max_iter, tol, exclude_ranges, force_ranges,
                   subtract) -> Spectrum:
     """Asymmetric least squares (Eilers & Boelens 2005); weights p above, 1-p below the baseline."""
@@ -236,7 +236,7 @@ def baseline_asls(s: Spectrum, lam, p, diff_order, max_iter, tol, exclude_ranges
 
 
 @operation("baseline_arpls", 1, "Baseline: arPLS (Whittaker)", "Baseline",
-           params=[P("lam", "log_float", 1e5, "λ (Glattheit)", min=0.0)] + _WH_PARAMS)
+           params=[P("lam", "log_float", 1e5, "λ (smoothness)", min=0.0)] + _WH_PARAMS)
 def baseline_arpls(s: Spectrum, lam, diff_order, max_iter, tol, exclude_ranges, force_ranges,
                    subtract) -> Spectrum:
     """Asymmetrically reweighted penalized least squares (Baek et al. 2015)."""
@@ -256,10 +256,10 @@ def _lls_inv(v):
 
 
 @operation("baseline_snip", 1, "Baseline: SNIP", "Baseline",
-           params=[P("max_half_window", "int", 20, "max. Halbfenster (Punkte)", min=1),
-                   P("decreasing", "bool", False, "abnehmende Fenster"),
-                   P("filter_order", "choice", 2, "Filterordnung", choices=(2, 4, 6, 8)),
-                   P("lls", "bool", False, "LLS-Transformation (Zähldaten)"),
+           params=[P("max_half_window", "int", 20, "Max. half-window (points)", min=1),
+                   P("decreasing", "bool", False, "Decreasing windows"),
+                   P("filter_order", "choice", 2, "Filter order", choices=(2, 4, 6, 8)),
+                   P("lls", "bool", False, "LLS transform (count data)"),
                    _SUBTRACT])
 def baseline_snip(s: Spectrum, max_half_window, decreasing, filter_order, lls, subtract) -> Spectrum:
     """Statistics-sensitive non-linear iterative peak clipping (Ryan 1988, Morháč 1997).
@@ -275,7 +275,7 @@ def baseline_snip(s: Spectrum, max_half_window, decreasing, filter_order, lls, s
                    {"method": "snip", "max_half_window": max_half_window, "filter_order": filter_order})
 
 
-@operation("baseline_rubberband", 1, "Baseline: Rubberband", "Baseline",
+@operation("baseline_rubberband", 1, "Baseline: rubberband", "Baseline",
            params=[_SUBTRACT])
 def baseline_rubberband(s: Spectrum, subtract) -> Spectrum:
     """Lower convex hull of the data (rubberband), linearly interpolated."""

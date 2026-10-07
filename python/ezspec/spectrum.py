@@ -33,6 +33,7 @@ class SigmaSource(str, Enum):
     ESTIMATED_REGION = "region"        # std. dev. of a user-marked flat region
     CONSTANT = "constant"              # constant entered by the user
     POISSON_DATA = "poisson_data"      # sigma = sqrt(y)  (biased, discouraged)
+    REPEATS = "repeats"                # standard error of the mean of repeated sweeps
     UNKNOWN = "unknown"                # no sigma; fit uses unit weights
 
     @property
@@ -44,16 +45,17 @@ class SigmaSource(str, Enum):
         """True if sigma has an absolute scale (chi-square interpretable)."""
         return self in (SigmaSource.KNOWN, SigmaSource.ESTIMATED_DERSNR,
                         SigmaSource.ESTIMATED_REGION, SigmaSource.CONSTANT,
-                        SigmaSource.POISSON_DATA)
+                        SigmaSource.POISSON_DATA, SigmaSource.REPEATS)
 
 
 SIGMA_LABELS = {
-    SigmaSource.KNOWN: "bekannt (Datenspalte)",
-    SigmaSource.ESTIMATED_DERSNR: "geschätzt (DER_SNR)",
-    SigmaSource.ESTIMATED_REGION: "geschätzt (flacher Bereich)",
-    SigmaSource.CONSTANT: "konstant (vom Nutzer gesetzt)",
-    SigmaSource.POISSON_DATA: "Poisson σ = √y (verzerrt!)",
-    SigmaSource.UNKNOWN: "unbekannt",
+    SigmaSource.KNOWN: "known (data column)",
+    SigmaSource.ESTIMATED_DERSNR: "estimated (DER_SNR)",
+    SigmaSource.ESTIMATED_REGION: "estimated (flat region)",
+    SigmaSource.CONSTANT: "constant (set by user)",
+    SigmaSource.POISSON_DATA: "Poisson σ = √y (biased!)",
+    SigmaSource.REPEATS: "estimated (scatter of repeats)",
+    SigmaSource.UNKNOWN: "unknown",
 }
 
 

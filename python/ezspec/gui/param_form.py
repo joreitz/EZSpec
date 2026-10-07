@@ -99,6 +99,18 @@ class LogSlider(QtWidgets.QWidget):
         self.valueChanged.emit(v, True)
 
 
+def _dict_summary(d) -> str:
+    """Read-only description of a structured parameter (e.g. a calibration)."""
+    if not d:
+        return "— (not set)"
+    if d.get("format") == "ezspec.calibration":
+        dom = d.get("domain", {})
+        rng = ", ".join(f"{k} ∈ [{a:.6g}, {b:.6g}]" for k, (a, b) in dom.items())
+        return (f"from “{d.get('source', '')}”: {d.get('expression', '')}\n"
+                f"{d.get('n_points', '?')} points · {rng}")
+    return f"{len(d)} entries"
+
+
 class ParamForm(QtWidgets.QWidget):
     changed = QtCore.Signal(str, object, bool)       # name, value, final
     rangeTarget = QtCore.Signal(str)                 # 'ranges' parameter edited by the plot tool
@@ -164,7 +176,7 @@ class ParamForm(QtWidgets.QWidget):
             for c in p.choices:
                 w.addItem("—" if c in ("", None) else str(c), c)
             if p.optional and None not in p.choices:
-                w.insertItem(0, "(automatisch)", None)
+                w.insertItem(0, "(automatic)", None)
             idx = w.findData(value)
             w.setCurrentIndex(max(idx, 0))
             w.currentIndexChanged.connect(lambda i, n=name, cb=w: self._emit(n, cb.itemData(i), True))
@@ -192,16 +204,16 @@ class ParamForm(QtWidgets.QWidget):
             lay.setContentsMargins(0, 0, 0, 0)
             lab = QtWidgets.QLabel()
             radio = QtWidgets.QRadioButton("Plot")
-            radio.setToolTip("Das Werkzeug 'Bereich' im Plot fügt Bereiche zu diesem Parameter hinzu")
+            radio.setToolTip("The 'Range' plot tool adds ranges to this parameter")
             self._range_group.addButton(radio)
             radio.toggled.connect(lambda on, n=name: on and self.rangeTarget.emit(n))
             btn = QtWidgets.QToolButton()
             btn.setText("…")
-            btn.setToolTip("Bereiche als Tabelle bearbeiten")
+            btn.setToolTip("Edit ranges as a table")
             btn.clicked.connect(lambda _=False, n=name: self.editRanges.emit(n))
             clr = QtWidgets.QToolButton()
             clr.setText("✕")
-            clr.setToolTip("alle Bereiche löschen")
+            clr.setToolTip("Delete all ranges")
             clr.clicked.connect(lambda _=False, n=name: self._emit(n, [], True))
             lay.addWidget(lab, 1)
             lay.addWidget(radio)
@@ -220,12 +232,17 @@ class ParamForm(QtWidgets.QWidget):
             lab = QtWidgets.QLabel()
             clr = QtWidgets.QToolButton()
             clr.setText("✕")
-            clr.setToolTip("alle Anker löschen")
+            clr.setToolTip("Delete all anchors")
             clr.clicked.connect(lambda _=False, n=name: self._emit(n, [], True))
             lay.addWidget(lab, 1)
             lay.addWidget(clr)
             w.label = lab
-            lab.setText(f"{len(value or [])} – Werkzeug 'Anker'")
+            lab.setText(f"{len(value or [])} – 'Anchor' tool")
+            return w
+        if p.kind == "dict":
+            w = QtWidgets.QLabel(_dict_summary(value))
+            w.setWordWrap(True)
+            w.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
             return w
         raise ValueError(p.kind)
 
@@ -268,7 +285,9 @@ class ParamForm(QtWidgets.QWidget):
                 elif p.kind == "ranges":
                     w.label.setText(f"{len(v or [])}×")
                 elif p.kind == "anchors":
-                    w.label.setText(f"{len(v or [])} – Werkzeug 'Anker'")
+                    w.label.setText(f"{len(v or [])} – 'Anchor' tool")
+                elif p.kind == "dict":
+                    w.setText(_dict_summary(v))
             finally:
                 w.blockSignals(False)
         self._update_hint()
@@ -283,20 +302,20 @@ class ParamForm(QtWidgets.QWidget):
 class RangesDialog(QtWidgets.QDialog):
     """Table editor for a list of x ranges."""
 
-    def __init__(self, ranges, title="Bereiche", parent=None):
+    def __init__(self, ranges, title="Ranges", parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         lay = QtWidgets.QVBoxLayout(self)
         self.table = QtWidgets.QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["von", "bis"])
+        self.table.setHorizontalHeaderLabels(["from", "to"])
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         lay.addWidget(self.table)
         for a, b in ranges:
             self._add(a, b)
         row = QtWidgets.QHBoxLayout()
-        add = QtWidgets.QPushButton("+ Zeile")
+        add = QtWidgets.QPushButton("+ Row")
         add.clicked.connect(lambda: self._add(0.0, 1.0))
-        rem = QtWidgets.QPushButton("− Zeile")
+        rem = QtWidgets.QPushButton("− Row")
         rem.clicked.connect(lambda: self.table.removeRow(self.table.currentRow()))
         row.addWidget(add)
         row.addWidget(rem)
