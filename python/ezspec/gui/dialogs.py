@@ -9,8 +9,9 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtGui import QUndoCommand, QUndoStack
 
+from .. import numfmt
 from .. import units as U
-from ..export.figure import (PRESET_NOTE, PRESETS, curve_title, dataset_curves, dataset_stages, get_path,
+from ..export.figure import (BASELINE_ITEM, BOX_CORNERS, PRESET_NOTE, PRESETS, curve_title, dataset_curves, dataset_stages, get_path,
                              make_resolver, new_trace, param_box_lines, render_figure, save_figure, set_path,
                              stage_spec)
 from ..fit import compare
@@ -297,16 +298,33 @@ class FigureDialog(QtWidgets.QDialog):
         trow.addStretch(1)
         lv.addLayout(trow)
         self.params = QtWidgets.QListWidget()
-        self.params.setMaximumHeight(100)
+        self.params.setMaximumHeight(110)
         self.params.setToolTip("Parameters shown in the text box of the main panel")
-        if res is not None:
-            names = list(res.params) + [f"{d.component}.{d.name}" for d in res.derived]
-            for n in names:
-                it = QtWidgets.QListWidgetItem(n)
-                it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
-                it.setCheckState(QtCore.Qt.Unchecked)
-                self.params.addItem(it)
-        lv.addWidget(QtWidgets.QLabel("Parameter box:"))
+        names = [BASELINE_ITEM] + ([] if res is None else
+                                   list(res.params) + [f"{d.component}.{d.name}" for d in res.derived])
+        for n in names:
+            it = QtWidgets.QListWidgetItem(n)
+            it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+            it.setCheckState(QtCore.Qt.Unchecked)
+            if n == BASELINE_ITEM:
+                it.setToolTip("States the subtracted baseline (method and parameters) in the figure")
+            self.params.addItem(it)
+        prow = QtWidgets.QHBoxLayout()
+        prow.addWidget(QtWidgets.QLabel("Parameter box:"))
+        prow.addStretch(1)
+        prow.addWidget(QtWidgets.QLabel("digits of uncertainty"))
+        self.box_digits = QtWidgets.QSpinBox()
+        self.box_digits.setRange(0, 8)
+        self.box_digits.setSpecialValueText("unrounded")
+        self.box_digits.setToolTip("Significant digits of the uncertainty in the parameter box (0 = no rounding)")
+        self.box_digits.setValue(numfmt.get_precision()["unc_digits"])
+        prow.addWidget(self.box_digits)
+        self.box_loc = QtWidgets.QComboBox()
+        for k in ["best", *BOX_CORNERS]:
+            self.box_loc.addItem(k, k)
+        self.box_loc.setToolTip("Position of the parameter box; 'best' avoids the data (and adds headroom)")
+        prow.addWidget(self.box_loc)
+        lv.addLayout(prow)
         lv.addWidget(self.params)
         btns = QtWidgets.QHBoxLayout()
         ub = QtWidgets.QPushButton("↶")
@@ -439,6 +457,8 @@ class FigureDialog(QtWidgets.QDialog):
         self.sec.currentIndexChanged.connect(self._secondary_changed)
         self.laser.valueEdited.connect(lambda _v: self._secondary_changed())
         self.params.itemChanged.connect(self._params_changed)
+        self.box_digits.valueChanged.connect(lambda _v: self._params_changed())
+        self.box_loc.currentIndexChanged.connect(lambda _i: self._params_changed())
 
     def _apply_preset(self):
         key = self.preset.currentData()
@@ -460,11 +480,27 @@ class FigureDialog(QtWidgets.QDialog):
             val = {"from": src, "to": unit, "laser_nm": self.laser.value()}
         self._set(f"panels.{self._panel()}.secondary_x", val)
 
+    def _stage_baselines(self):
+        """Baseline recipes that apply to the figure's content."""
+        info = self._stage_info()
+        if info["id"] == "raw":
+            return []
+        if info["id"] == "result" and self.ds.fit_result is not None:
+            return self.ds.fit_result.provenance.get("baselines") or []
+        return list(info["spectrum"].meta.get("baselines", []))
+
     def _params_changed(self):
+        if self._loading:
+            return
         res = self.ds.fit_result
         names = [self.params.item(i).text() for i in range(self.params.count())
                  if self.params.item(i).checkState() == QtCore.Qt.Checked]
-        val = {"lines": param_box_lines(res, names)} if names else None
+        digits = self.box_digits.value()
+        val = None
+        if names:
+            val = {"lines": param_box_lines(res, names, digits=digits, baselines=self._stage_baselines(),
+                                            model_spec=None if res is None else res.model_spec),
+                   "names": names, "digits": digits, "loc": self.box_loc.currentData()}
         self._set("panels.0.param_box", val)
 
     def _trace_edited(self, row, col):
@@ -503,6 +539,14 @@ class FigureDialog(QtWidgets.QDialog):
             self.lw.setValue(s.get("line_width", 1.0))
             self.panel_labels.setChecked(bool(s.get("panel_labels")))
             self.stage_combo.setCurrentIndex(max(self.stage_combo.findData(self.stage), 0))
+            pb = (s["panels"][0].get("param_box") if s["panels"] else None) or {}
+            chosen = set(pb.get("names", []))
+            for i in range(self.params.count()):
+                it = self.params.item(i)
+                it.setCheckState(QtCore.Qt.Checked if it.text() in chosen else QtCore.Qt.Unchecked)
+            if "digits" in pb:
+                self.box_digits.setValue(int(pb["digits"]))
+            self.box_loc.setCurrentIndex(max(self.box_loc.findData(pb.get("loc", "best")), 0))
             self.setWindowTitle(f"Figure – {self.ds.name} – {self._stage_info()['title']}")
             idx = self._panel()
             self.panel_sel.clear()

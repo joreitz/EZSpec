@@ -39,6 +39,11 @@ def statistics_rows(result) -> list:
              ("runs", st.runs.get("runs")), ("runs_expected", st.runs.get("expected")),
              ("runs_p_too_few", st.runs.get("p_too_few")), ("lag1_autocorr", st.lag1_autocorr),
              ("durbin_watson", st.durbin_watson), ("jacobian_condition", st.jacobian_condition)]
+    from ..baseline_info import baseline_short, describe_baseline
+    recipes = result.provenance.get("baselines") or []
+    rows.append(("baseline", baseline_short(recipes, result.model_spec, prefix=False)))
+    for i, rec in enumerate(recipes, 1):
+        rows.append((f"baseline_{i}", describe_baseline(rec)))
     return rows
 
 
@@ -62,6 +67,8 @@ def write_curves_csv(result, path, delimiter: str = ",") -> None:
     if result.sigma is not None:
         cols["sigma"] = result.sigma
     cols.update(fit=result.best_fit, residual=result.residuals, normalized_residual=result.normalized_residuals)
+    if getattr(result, "baseline", None) is not None:      # y + baseline_subtracted = data before baseline removal
+        cols["baseline_subtracted"] = result.baseline
     for k, v in result.components.items():
         cols[f"component_{k.rstrip('_')}"] = v
     names = list(cols)

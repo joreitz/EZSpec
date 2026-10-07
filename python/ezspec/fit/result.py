@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
+from .. import numfmt as _numfmt
+
 
 @dataclass
 class ParamResult:
@@ -127,6 +129,7 @@ class FitResult:
     data_hash: str
     provenance: dict
     extra: dict = field(default_factory=dict)       # bootstrap / profile CI results
+    baseline: np.ndarray | None = None              # baseline subtracted before the fit, at the fitted points
     _internals: dict = field(default_factory=dict, repr=False)
 
     # ------------------------------------------------------------------ access
@@ -180,6 +183,7 @@ class FitResult:
         if include_curves:
             d["curves"] = {"x": self.x, "y": self.y, "sigma": self.sigma, "best_fit": self.best_fit,
                            "residuals": self.residuals, "normalized_residuals": self.normalized_residuals,
+                           "baseline_subtracted": self.baseline,
                            **{f"component:{k}": v for k, v in self.components.items()}}
         return _clean(d)
 
@@ -194,20 +198,14 @@ class FitResult:
 
 
 # =============================================================================== report
-def fmt_value(v: float, e: float | None, digits: int = 2) -> str:
-    """Value with uncertainty, rounded to ``digits`` significant digits of the uncertainty."""
-    if v is None or not np.isfinite(v):
-        return str(v)
-    if e is None or not np.isfinite(e) or e <= 0:
-        return f"{v:.6g}"
-    exp = math.floor(math.log10(e)) - (digits - 1)
-    if -5 <= exp <= 5 and abs(v) < 1e7:
-        dec = max(0, -exp)
-        return f"{round(v, -exp):.{dec}f} ± {round(e, -exp):.{dec}f}"
-    return f"{v:.{max(digits, 3)}e} ± {e:.{digits - 1}e}"
+def fmt_value(v: float, e: float | None, digits: int | None = None) -> str:
+    """Value with uncertainty, rounded to ``digits`` significant digits of the
+    uncertainty (default: the global setting of :mod:`ezspec.numfmt`)."""
+    return _numfmt.fmt_value(v, e, digits)
 
 
-def _g(v, spec=".6g"):
+def _g(v, spec=None):
+    """Number without uncertainty; ``spec=None`` uses the global significant-digit setting."""
     if v is None:
         return "–"
     try:
@@ -215,6 +213,8 @@ def _g(v, spec=".6g"):
             return str(v)
     except TypeError:
         return str(v)
+    if spec is None:
+        return _numfmt.fmt_num(v)
     return format(v, spec)
 
 
@@ -233,6 +233,16 @@ def format_report(r: FitResult) -> str:
            "scaled": "scaled by √χ²_ν or s (σ estimated from the residuals)",
            "unavailable": "NOT available"}[st.covariance_mode]
     L.append(f"Covariance: {cov}")
+    prec = _numfmt.get_precision()
+    L.append("Rounding: " + ("none" if prec["unc_digits"] == 0 else
+                             f"{prec['unc_digits']} significant digit(s) of the uncertainty")
+             + " (full precision in the JSON/CSV export)")
+    L.append("")
+    L.append("Baseline")
+    L.append("-" * 72)
+    from ..baseline_info import baseline_statement
+    for line in baseline_statement(r.provenance.get("baselines"), r.model_spec):
+        L.append("  " + line)
     L.append("")
     L.append("Parameters")
     L.append("-" * 72)
@@ -269,7 +279,7 @@ def format_report(r: FitResult) -> str:
     else:
         L.append("  χ²: not defined (σ unknown) – instead:")
     L.append(f"  RSS = {_g(st.rss)}   s = √(RSS/ν) = {_g(st.s_res)}   RMSE = √(RSS/N) = {_g(st.rmse)}")
-    L.append(f"  AIC = {_g(st.aic, '.6g')}   AICc = {_g(st.aicc, '.6g')}   BIC = {_g(st.bic, '.6g')}")
+    L.append(f"  AIC = {_g(st.aic)}   AICc = {_g(st.aicc)}   BIC = {_g(st.bic)}")
     L.append(f"     Form: {st.ic_form}; only differences on identical data are meaningful")
     L.append(f"  R² = {_g(st.r2, '.6f')}   R²_adj = {_g(st.adj_r2, '.6f')}   "
              "(descriptive – not for model comparison)")

@@ -53,6 +53,17 @@ Without the compiled core everything runs on the NumPy/SciPy reference implement
 4. **Results**: statistics with explanations (tooltips), warnings, derived quantities, correlation
    matrix, residual diagnostics, text report. In addition *Profile CI*, *Bootstrap*, baseline
    systematics, remembering and comparing variants (ΔAICc, Akaike weights).
+   **Rounding**: values are shown with 2 significant digits of the uncertainty (GUM) by default;
+   *View → Number format* raises this (up to 8 digits or no rounding) and sets the digits of values
+   without uncertainty (up to full double precision). The figure parameter box has its own setting.
+   Exported CSV/JSON files always contain the full double-precision values.
+   **Baseline statement**: every result states the baseline. The report has a *Baseline* section with
+   method and all parameters (λ with its cut-off period in points and x units, excluded/forced ranges,
+   convergence, effective anchor points, polynomial coefficients with standard errors from the scatter
+   in the baseline ranges), or states explicitly that no baseline was subtracted and whether the model
+   contains a background term. The same statement appears in the results table, the statistics CSV and
+   the JSON export; the curves CSV contains the subtracted baseline, so the data before baseline removal
+   can be reconstructed. Result figures state a subtracted baseline in the parameter box by default.
 5. **Combine datasets** (*Analysis → Combine datasets*, Ctrl+K, or *Combine…* in the Data dock):
    datasets get aliases (a, b, c, …). The new x and y axes are arbitrary formulas of these names;
    `x` is the common x, `x_a` the x of dataset a. Diagnosis and preview update live; the result

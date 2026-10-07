@@ -235,8 +235,16 @@ def stage_spec(source: str, curves: dict, stage: dict, preset: str = "elsevier_1
     s = stage["spectrum"]
     xl = axis_label_for(s)
     yl = y_label or s.y_label or "Intensity"
+    from ..baseline_info import baseline_short, describe_baseline
+    recipes = [r for r in s.meta.get("baselines", []) if r.get("subtracted", True)]
     if stage["id"] == "result":
-        return default_spec(source, curves, xl, yl, preset)
+        spec = default_spec(source, curves, xl, yl, preset)
+        if recipes:            # a subtracted baseline is always stated in the figure (can be switched off)
+            from .. import numfmt
+            spec["panels"][0]["param_box"] = {"lines": [baseline_short(recipes)],
+                                              "names": [BASELINE_ITEM],
+                                              "digits": numfmt.get_precision()["unc_digits"]}
+        return spec
     spec = new_spec(preset)
     spec["content"] = stage["id"]
     if stage["id"] == "raw":
@@ -252,7 +260,9 @@ def stage_spec(source: str, curves: dict, stage: dict, preset: str = "elsevier_1
     if pre + "baseline" in curves:
         main["xlabel"] = ""
         main["traces"] += _data_traces(source, curves, pre + "input:", "Data")
-        main["traces"].append(new_trace(source, pre + "baseline", "line", label="Baseline", color="#3f90da",
+        rec = s.meta.get("baselines", [{}])[-1] if s.meta.get("baselines") else {}
+        label = describe_baseline(rec, short=True) if rec else "Baseline"
+        main["traces"].append(new_trace(source, pre + "baseline", "line", label=label, color="#3f90da",
                                         lw=1.2, ls="--", zorder=3))
         spec["panels"].append(main)
         low = new_panel(1.5, xlabel=xl, ylabel="Corrected", legend=None, zero_line=True)
@@ -445,9 +455,70 @@ def _draw_panel(ax, panel, resolve, cycle):
         _secondary(ax, panel["secondary_x"])
     pb = panel.get("param_box")
     if pb and pb.get("lines"):
-        ax.text(pb.get("x", 0.97), pb.get("y", 0.95), "\n".join(pb["lines"]), transform=ax.transAxes,
-                ha=pb.get("ha", "right"), va="top", fontsize=None,
-                bbox={"boxstyle": "round,pad=0.3", "fc": "white", "ec": "0.7", "lw": 0.5})
+        txt = ax.text(0.97, 0.95, "\n".join(pb["lines"]), transform=ax.transAxes, ha="right", va="top",
+                      fontsize="small", zorder=10,
+                      bbox={"boxstyle": "round,pad=0.3", "fc": "white", "ec": "0.7", "lw": 0.5})
+        _place_box(ax, txt, pb.get("loc", "best"), allow_headroom=not panel.get("ylim"))
+
+
+BOX_CORNERS = {"upper right": (0.97, 0.95, "right", "top"), "upper left": (0.03, 0.95, "left", "top"),
+               "lower right": (0.97, 0.05, "right", "bottom"), "lower left": (0.03, 0.05, "left", "bottom")}
+
+
+def _place_box(ax, txt, loc: str = "best", allow_headroom: bool = True) -> None:
+    """Put a text box into a corner; 'best' picks the corner covering the fewest data points
+    (the legend, placed later with loc='best', then avoids the box)."""
+    if loc in BOX_CORNERS:
+        x, y, ha, va = BOX_CORNERS[loc]
+        txt.set_position((x, y))
+        txt.set_ha(ha)
+        txt.set_va(va)
+        return
+    fig = ax.figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    canvas = FigureCanvasAgg(fig) if not hasattr(fig.canvas, "get_renderer") else fig.canvas
+    renderer = canvas.get_renderer()
+    ax.get_xlim(), ax.get_ylim()                 # apply pending autoscaling before mapping data to axes coords
+    to_axes = ax.transAxes.inverted()
+    pts = []
+    for line in ax.lines:
+        xy = line.get_xydata()
+        if len(xy):
+            pts.append(to_axes.transform(ax.transData.transform(xy)))
+    for coll in ax.collections:
+        off = coll.get_offsets()
+        if len(off):
+            pts.append(to_axes.transform(ax.transData.transform(off)))
+    P = np.vstack(pts) if pts else np.zeros((0, 2))
+    best = None
+    for name, (x, y, ha, va) in BOX_CORNERS.items():
+        txt.set_position((x, y))
+        txt.set_ha(ha)
+        txt.set_va(va)
+        bb = txt.get_window_extent(renderer).transformed(ax.transAxes.inverted())
+        inside = int(np.count_nonzero((P[:, 0] >= bb.x0) & (P[:, 0] <= bb.x1) &
+                                      (P[:, 1] >= bb.y0) & (P[:, 1] <= bb.y1))) if len(P) else 0
+        if best is None or inside < best[0]:
+            best = (inside, name)
+    x, y, ha, va = BOX_CORNERS[best[1]]
+    txt.set_position((x, y))
+    txt.set_ha(ha)
+    txt.set_va(va)
+    if best[0] and allow_headroom and ax.get_yscale() == "linear":
+        # still covering data: extend the y range so the box sits above (or below) the curves
+        bb = txt.get_window_extent(renderer).transformed(ax.transAxes.inverted())
+        under = P[(P[:, 0] >= bb.x0) & (P[:, 0] <= bb.x1)]
+        lo, hi = ax.get_ylim()
+        if va == "top" and len(under):
+            top = float(np.max(under[:, 1]))
+            room = bb.y0 - 0.03
+            if 0 < room < top:
+                ax.set_ylim(lo, lo + (hi - lo) * top / room)
+        elif va == "bottom" and len(under):
+            bottom = float(np.min(under[:, 1]))
+            room = bb.y1 + 0.03
+            if bottom < room < 1:
+                ax.set_ylim(hi - (hi - lo) * (1 - bottom) / (1 - room), hi)
 
 
 def render_figure(spec: dict, resolve: Callable):
@@ -495,12 +566,28 @@ def _metadata(path, fmt):
     return None
 
 
-def param_box_lines(result, names: list, labels: dict | None = None) -> list:
-    """Formatted 'name = value ± error' lines for a parameter box."""
+BASELINE_ITEM = "Baseline (statement)"
+
+
+def param_box_lines(result, names: list, labels: dict | None = None, digits: int | None = None,
+                    baselines: list | None = None, model_spec: dict | None = None) -> list:
+    """Formatted 'name = value ± error' lines for a parameter box, rounded to
+    ``digits`` significant digits of the uncertainty (None: global setting,
+    0: no rounding). The pseudo-name :data:`BASELINE_ITEM` adds a line stating
+    the baseline (``baselines``: recipes; default: those of ``result``)."""
+    from ..baseline_info import baseline_short
     from ..fit.result import fmt_value
     out = []
-    table = result.derived_table()
+    table = result.derived_table() if result is not None else {}
     for n in names:
+        if n == BASELINE_ITEM:
+            recipes = baselines if baselines is not None else (result.provenance.get("baselines")
+                                                               if result is not None else [])
+            spec = model_spec if model_spec is not None else (result.model_spec if result is not None else None)
+            out.append(baseline_short(recipes, spec))
+            continue
+        if result is None:
+            continue
         if n in result.params:
             p = result.params[n]
             v, e = p.value, p.stderr
@@ -508,5 +595,5 @@ def param_box_lines(result, names: list, labels: dict | None = None) -> list:
             comp, _, key = n.partition(".")
             v, e = table[comp][key]
         lab = (labels or {}).get(n, n)
-        out.append(f"{lab} = {fmt_value(v, e)}")
+        out.append(f"{lab} = {fmt_value(v, e, digits)}")
     return out
