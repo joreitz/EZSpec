@@ -91,7 +91,7 @@ def parse_table(text: str, delimiter: str | None = "auto", decimal: str = "auto"
         sample = content[:2000]
         best = _candidates(sample)
         if best is None:
-            raise ValueError("keine numerischen Datenzeilen gefunden")
+            raise ValueError("no numeric data rows found")
         _, d_auto, dec_auto, _ = best
         delimiter = d_auto if delimiter == "auto" else delimiter
         decimal = dec_auto if decimal == "auto" else decimal
@@ -119,10 +119,10 @@ def parse_table(text: str, delimiter: str | None = "auto", decimal: str = "auto"
         else:
             skipped += 1
     if not rows:
-        raise ValueError("keine numerischen Datenzeilen gefunden")
+        raise ValueError("no numeric data rows found")
     data = np.array(rows, float)
     if len(header) != data.shape[1]:
-        header = [f"Spalte {i + 1}" for i in range(data.shape[1])]
+        header = [f"Column {i + 1}" for i in range(data.shape[1])]
     return TableInfo(delimiter, decimal, header, n_header, data, skipped)
 
 

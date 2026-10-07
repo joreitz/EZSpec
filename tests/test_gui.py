@@ -140,7 +140,7 @@ def test_peaks_fit_statistics_and_analysis(app, win, tmp_path):
     for c in m2.peaks:
         add_peak(g, "gaussian", c.settings["center"].value, 10, 8)
     r2 = fit(w.state.run(ds).final, g, ds.fit_options)
-    dlg = CompareDialog({"Lorentz": ds.fit_result, "Gauß": r2})
+    dlg = CompareDialog({"Lorentz": ds.fit_result, "Gaussian": r2})
     assert dlg.null.count() == 2
     # figure dialog renders and edits are undoable
     fd = FigureDialog(ds, None, w)
@@ -311,7 +311,7 @@ def test_combine_dialog_creates_derived_dataset(app, win):
     dlg.name.setText("R")
     dlg.update_preview()
     assert dlg.result is not None and dlg.result.sigma is not None, dlg.info.text()
-    assert "identisches x-Raster" in dlg.info.text()
+    assert "identical x grid" in dlg.info.text()
     n_before = len(w.state.project.datasets)
     dlg._accept()
     pump(app)
@@ -321,7 +321,7 @@ def test_combine_dialog_creates_derived_dataset(app, win):
     dlg2 = CombineDialog(w.state, w)
     dlg2.xexpr.setText("nonsense_name")
     dlg2.update_preview()
-    assert dlg2.result is None and "unbekannte Namen" in dlg2.info.text()
+    assert dlg2.result is None and "unknown names" in dlg2.info.text()
 
 
 def test_back_and_forth_ramp_is_drawn_in_acquisition_order(app, win):
@@ -385,7 +385,7 @@ def test_calibration_surface_slices_and_dialog(app, win):
     assert list(dlg.fixed_edits) == ["T"] and dlg.fixed_edits["T"].value() == 25.0
     targets = dlg.checked_targets()
     assert [t.id for t in targets] == [meas.id]
-    assert "im kalibrierten Bereich" in dlg.slice_info.text()
+    assert "within calibrated range" in dlg.slice_info.text()
     dlg._accept()
     w.apply_calibration(dlg.params, dlg.targets)
     pump(app)

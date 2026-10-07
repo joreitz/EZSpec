@@ -49,13 +49,13 @@ class SigmaSource(str, Enum):
 
 
 SIGMA_LABELS = {
-    SigmaSource.KNOWN: "bekannt (Datenspalte)",
-    SigmaSource.ESTIMATED_DERSNR: "geschätzt (DER_SNR)",
-    SigmaSource.ESTIMATED_REGION: "geschätzt (flacher Bereich)",
-    SigmaSource.CONSTANT: "konstant (vom Nutzer gesetzt)",
-    SigmaSource.POISSON_DATA: "Poisson σ = √y (verzerrt!)",
-    SigmaSource.REPEATS: "geschätzt (Streuung der Wiederholungen)",
-    SigmaSource.UNKNOWN: "unbekannt",
+    SigmaSource.KNOWN: "known (data column)",
+    SigmaSource.ESTIMATED_DERSNR: "estimated (DER_SNR)",
+    SigmaSource.ESTIMATED_REGION: "estimated (flat region)",
+    SigmaSource.CONSTANT: "constant (set by user)",
+    SigmaSource.POISSON_DATA: "Poisson σ = √y (biased!)",
+    SigmaSource.REPEATS: "estimated (scatter of repeats)",
+    SigmaSource.UNKNOWN: "unknown",
 }
 
 

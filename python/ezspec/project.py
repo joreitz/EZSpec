@@ -215,9 +215,9 @@ class Project:
         with zipfile.ZipFile(path) as z:
             manifest = json.loads(z.read("manifest.json"))
             if manifest.get("format") != FORMAT:
-                raise ValueError("keine EZSpec-Projektdatei")
+                raise ValueError("not an EZSpec project file")
             if manifest.get("format_version", 0) > FORMAT_VERSION:
-                raise ValueError("Projektdatei stammt aus einer neueren EZSpec-Version")
+                raise ValueError("project file was created by a newer EZSpec version")
             proj = cls(meta=manifest.get("meta", {}), path=path)
             for e in manifest["datasets"]:
                 i = e["id"]
@@ -255,7 +255,7 @@ def save_template(ds: Dataset, path) -> None:
 def load_template(path) -> dict:
     d = json.loads(Path(path).read_text(encoding="utf-8"))
     if d.get("format") != TEMPLATE_FORMAT:
-        raise ValueError("keine EZSpec-Vorlage")
+        raise ValueError("not an EZSpec template")
     Pipeline.from_dict(d["pipeline"])        # validate
     Model.from_dict(d["model"])
     return d

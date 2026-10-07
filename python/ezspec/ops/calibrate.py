@@ -11,16 +11,16 @@ from .registry import ParamSpec as P
 from .registry import operation, warn
 
 
-@operation("calibrate_x", 1, "x kalibrieren (Fit als Kalibrierung)", "Einheiten",
-           params=[P("calibration", "dict", {}, "Kalibrierung",
-                     help="aus einem Fit übernommen (Analyse → Fit als x-Kalibrierung anwenden)"),
-                   P("fixed", "str", "", "feste Variablen",
-                     help="z. B. T=25 – leer: Spalte var:<Name> der Daten (Wert je Punkt)"),
-                   P("fixed_sigma", "str", "", "Unsicherheit fester Werte",
-                     help="z. B. T=0.02 – geht als systematischer Beitrag in σ_x,cal ein"),
-                   P("x_label", "str", "", "neuer Achsentitel"),
-                   P("x_unit", "str", "", "neue Einheit"),
-                   P("spectral_density", "bool", False, "y ist Dichte pro x-Einheit (Jacobi-Faktor)")],
+@operation("calibrate_x", 1, "Calibrate x (fit as calibration)", "Units",
+           params=[P("calibration", "dict", {}, "Calibration",
+                     help="taken from a fit (Analysis → Apply fit as x calibration)"),
+                   P("fixed", "str", "", "Fixed variables",
+                     help="e.g. T=25 – empty: data column var:<name> (one value per point)"),
+                   P("fixed_sigma", "str", "", "Uncertainty of fixed values",
+                     help="e.g. T=0.02 – enters σ_x,cal as a systematic contribution"),
+                   P("x_label", "str", "", "New axis title"),
+                   P("x_unit", "str", "", "New unit"),
+                   P("spectral_density", "bool", False, "y is a density per x unit (Jacobian factor)")],
            flags=("x_calibrated",))
 def calibrate_x(s: Spectrum, calibration, fixed, fixed_sigma, x_label, x_unit, spectral_density) -> Spectrum:
     """Replace x by the calibration evaluated at x with the other variables fixed
@@ -33,8 +33,8 @@ def calibrate_x(s: Spectrum, calibration, fixed, fixed_sigma, x_label, x_unit, s
     fixed_sig = parse_assignments(fixed_sigma)
     unknown = (set(fixed_vals) | set(fixed_sig)) - set(cal.variables)
     if unknown:
-        raise ValueError(f"unbekannte Variable(n) {', '.join(sorted(unknown))} – die Kalibrierung hat "
-                         f"{', '.join(cal.variables) or 'keine weiteren Variablen'}")
+        raise ValueError(f"unknown variable(s) {', '.join(sorted(unknown))} – the calibration has "
+                         f"{', '.join(cal.variables) or 'no further variables'}")
     values, per_point = {}, []
     for v in cal.variables:
         if v in fixed_vals:
@@ -43,17 +43,17 @@ def calibrate_x(s: Spectrum, calibration, fixed, fixed_sigma, x_label, x_unit, s
             values[v] = np.asarray(s.aux[f"var:{v}"], float)
             per_point.append(v)
         else:
-            raise ValueError(f"Wert für {v!r} fehlt: bei 'feste Variablen' z. B. {v}=… eintragen "
-                             f"oder die Spalte {v} mit importieren")
+            raise ValueError(f"value for {v!r} missing: enter e.g. {v}=… under 'Fixed variables' "
+                             f"or import the column {v} as well")
     xn = cal.evaluate(s.x, values)
     if not np.all(np.isfinite(xn)):
-        raise ValueError("Kalibrierung liefert für einige Punkte keinen endlichen Wert")
+        raise ValueError("calibration yields non-finite values for some points")
     k = cal.slope(s.x, values)
     if np.any(k > 0) and np.any(k < 0):
-        raise ValueError("Kalibrierung ist im x-Bereich der Daten nicht monoton (df/dx wechselt das Vorzeichen) "
-                         "– die neue Achse wäre nicht eindeutig")
+        raise ValueError("calibration is not monotonic over the x range of the data (df/dx changes sign) "
+                         "– the new axis would be ambiguous")
     if np.any(k == 0):
-        raise ValueError("df/dx = 0 im Datenbereich – Abbildung nicht umkehrbar")
+        raise ValueError("df/dx = 0 within the data range – mapping not invertible")
 
     sig_cal = cal.sigma(s.x, values)
     var_cal = np.zeros(s.n) if sig_cal is None else sig_cal ** 2
@@ -84,12 +84,12 @@ def calibrate_x(s: Spectrum, calibration, fixed, fixed_sigma, x_label, x_unit, s
     if spectral_density:
         out = out.with_flags("jacobian")
     if "x_calibrated" in s.flags:
-        out = warn(out, "x war bereits kalibriert – Kalibrierung wird auf die schon kalibrierte Achse angewandt.")
+        out = warn(out, "x was already calibrated – the calibration is applied to the already calibrated axis.")
     cu, su = cal.d.get("x_unit") or "", s.x_unit or ""
     cl, sl = cal.d.get("x_label") or "", s.x_label or ""
     if (cu and su and cu != su) or (not (cu or su) and cl and sl and cl != sl and sl != "x"):
-        out = warn(out, f"x-Achse der Daten ({sl} {su}) passt nicht zur Kalibrierung ({cl} {cu}) – Einheiten "
-                        "prüfen.")
+        out = warn(out, f"x axis of the data ({sl} {su}) does not match the calibration ({cl} {cu}) – check "
+                        "units.")
     if n_out:
-        out = warn(out, f"{n_out} von {s.n} Punkten liegen außerhalb des kalibrierten Bereichs (Extrapolation).")
+        out = warn(out, f"{n_out} of {s.n} points lie outside the calibrated range (extrapolation).")
     return out.sorted()

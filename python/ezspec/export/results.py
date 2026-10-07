@@ -22,14 +22,14 @@ def parameter_rows(result) -> list:
         rows.append({"parameter": f"{d.component}.{d.name}", "value": d.value,
                      "stderr": "" if d.stderr is None else d.stderr,
                      "rel_stderr": "" if d.stderr is None or d.value == 0 else abs(d.stderr / d.value),
-                     "vary": "", "expr": "abgeleitet", "min": "", "max": "", "init": "", "at_bound": "",
+                     "vary": "", "expr": "derived", "min": "", "max": "", "init": "", "at_bound": "",
                      "stderr_reliable": "", "covariance": result.stats.covariance_mode})
     return rows
 
 
 def statistics_rows(result) -> list:
     st = result.stats
-    rows = [("N", st.n_points), ("p (frei)", st.n_varys), ("nu", st.dof), ("sigma_source", st.sigma_label),
+    rows = [("N", st.n_points), ("p (free)", st.n_varys), ("nu", st.dof), ("sigma_source", st.sigma_label),
             ("weighting", st.weighting), ("covariance", st.covariance_mode)]
     if st.chi2 is not None:
         rows += [("chi2", st.chi2), ("redchi", st.redchi), ("redchi_band_lo", st.redchi_band[0]),

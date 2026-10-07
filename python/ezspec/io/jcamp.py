@@ -77,7 +77,7 @@ def _tokenize(line: str, asdf: bool = False):
             flush()
             tokens.append(("AFFN", "nan"))
         else:
-            raise JcampError(f"unerwartetes Zeichen {c!r} in Datenzeile: {line[:60]!r}")
+            raise JcampError(f"unexpected character {c!r} in data line: {line[:60]!r}")
         i += 1
     flush()
     return tokens
@@ -129,10 +129,10 @@ def decode_xydata(lines, warnings: list | None = None):
             # y-check: first ordinate repeats the last ordinate of the previous line
             if ys and not np.isclose(vals[0], ys[-1], rtol=1e-9, atol=1e-9):
                 if k == len(lines) - 1 and len(vals) == 1:
-                    warnings.append(f"letzte Zeile mit abweichendem Y-Prüfwert ({vals[0]:g} statt "
-                                    f"{ys[-1]:g}) ignoriert")
+                    warnings.append(f"Last line with mismatching y-check value ({vals[0]:g} instead of "
+                                    f"{ys[-1]:g}) ignored")
                 else:
-                    raise JcampError(f"Y-Prüfwert stimmt nicht (Zeile {k + 1}): {vals[0]} != {ys[-1]}")
+                    raise JcampError(f"y-check value mismatch (line {k + 1}): {vals[0]} != {ys[-1]}")
             vals = vals[1:]
         ys.extend(vals)
         prev_ended_dif = last_dif
@@ -145,7 +145,7 @@ def _decode_pairs(lines):
         for kind, text in _tokenize(line):
             nums.append(_value(kind, text))
     if len(nums) % 2:
-        raise JcampError("ungerade Anzahl Werte in (XY..XY)-Daten")
+        raise JcampError("odd number of values in (XY..XY) data")
     a = np.array(nums, float).reshape(-1, 2)
     return a[:, 0], a[:, 1]
 
@@ -188,8 +188,8 @@ def parse_jcamp(text: str) -> dict:
             data_lines.append(line.strip())
     if data_kind is None:
         if "NTUPLES" in labels:
-            raise JcampError("JCAMP-NTUPLES (z. B. NMR-FIDs, Mehrfachspektren) werden noch nicht unterstützt")
-        raise JcampError("keine ##XYDATA-, ##XYPOINTS- oder ##PEAK TABLE-Daten gefunden")
+            raise JcampError("JCAMP NTUPLES (e.g. NMR FIDs, multiple spectra) are not supported yet")
+        raise JcampError("no ##XYDATA, ##XYPOINTS or ##PEAK TABLE data found")
 
     def num(key, default=None):
         if key not in labels:
@@ -201,7 +201,7 @@ def parse_jcamp(text: str) -> dict:
 
     warnings = []
     if extra_blocks:
-        warnings.append(f"Datei enthält {extra_blocks + 1} Datenblöcke; nur der erste wurde gelesen")
+        warnings.append(f"File contains {extra_blocks + 1} data blocks; only the first was read")
     xf = num("XFACTOR", 1.0)
     yf = num("YFACTOR", 1.0)
     key, form = data_kind
@@ -209,14 +209,14 @@ def parse_jcamp(text: str) -> dict:
         key = "XYPOINTS"
     if key == "XYDATA":
         if not form.upper().startswith("(X++(Y..Y)"):
-            raise JcampError(f"XYDATA-Form {form} nicht unterstützt")
+            raise JcampError(f"XYDATA form {form} not supported")
         line_x, y = decode_xydata(data_lines, warnings)
         y = y * yf
         npts = num("NPOINTS")
         first = num("FIRSTX")
         last = num("LASTX")
         if npts is not None and int(npts) != len(y):
-            raise JcampError(f"NPOINTS = {int(npts)}, aber {len(y)} Werte dekodiert")
+            raise JcampError(f"NPOINTS = {int(npts)}, but {len(y)} values decoded")
         if first is not None and last is not None and len(y) > 1:
             x = np.linspace(first, last, len(y))
         else:

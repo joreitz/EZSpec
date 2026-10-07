@@ -80,7 +80,7 @@ def test_division_by_zero_and_bad_names():
     a = spectrum(t, np.ones(21))
     b = spectrum(t, t)
     out, rep = combine({"a": a, "b": b}, y_expr="a/b")
-    assert out.n == 20 and any("nicht definiert" in w for w in rep["warnings"])
+    assert out.n == 20 and any("undefined" in w for w in rep["warnings"])
     with pytest.raises(CombineError):
         combine({"a": a, "b": b}, y_expr="a/c")
     with pytest.raises(CombineError):

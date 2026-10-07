@@ -56,27 +56,27 @@ def default_aliases(n: int) -> list:
 def _check_alias(a: str):
     if not _ALIAS.match(a) or keyword.iskeyword(a) or a in FUNCTIONS or a in CONSTANTS or a == "x" \
             or a.startswith("x_"):
-        raise CombineError(f"ungültiger Kurzname {a!r} (Buchstaben/Ziffern, nicht 'x', kein Funktionsname)")
+        raise CombineError(f"invalid alias {a!r} (letters/digits, not 'x', not a function name)")
 
 
 def diagnose_alignment(spectra: list) -> dict:
     """What 'auto' would do, with a human-readable explanation."""
     ref = spectra[0]
     if all(s.n == ref.n and np.array_equal(s.x, ref.x) for s in spectra[1:]):
-        return {"mode": "exact", "text": "identisches x-Raster – Punkte werden direkt verrechnet"}
+        return {"mode": "exact", "text": "identical x grid – points are combined directly"}
     if all(s.n == ref.n for s in spectra[1:]):
         dx = abs(ref.dx_median) if ref.n > 1 else np.inf
         dev = max(float(np.max(np.abs(s.x - ref.x))) for s in spectra[1:])
         if np.isfinite(dx) and dev < 0.5 * dx:
-            return {"mode": "index", "text": f"gleiche Punktzahl, x weicht um ≤ {dev:.3g} (< ½ Schrittweite) ab – "
-                                             "punktweise Zuordnung (gleichzeitig aufgenommen)"}
+            return {"mode": "index", "text": f"same number of points, x differs by ≤ {dev:.3g} (< ½ step) – "
+                                             "point-by-point matching (recorded simultaneously)"}
     lo = max(float(s.x.min()) for s in spectra)
     hi = min(float(s.x.max()) for s in spectra)
     if not lo < hi:
-        return {"mode": "none", "text": "die x-Bereiche überlappen nicht"}
-    return {"mode": "interpolate", "text": f"verschiedene x-Raster – lineare Interpolation auf das Raster des "
-                                           f"Referenzdatensatzes im gemeinsamen Bereich [{lo:.6g}, {hi:.6g}] "
-                                           "(korreliert benachbarte Punkte)"}
+        return {"mode": "none", "text": "the x ranges do not overlap"}
+    return {"mode": "interpolate", "text": f"different x grids – linear interpolation onto the grid of the "
+                                           f"reference dataset within the common range [{lo:.6g}, {hi:.6g}] "
+                                           "(correlates neighbouring points)"}
 
 
 def _interp_with_sigma(s: Spectrum, xq: np.ndarray):
@@ -97,21 +97,21 @@ def _interp_with_sigma(s: Spectrum, xq: np.ndarray):
 def align(spectra: list, mode: str = "auto", reference: int = 0) -> dict:
     """Bring datasets onto a common grid. Returns x, per-dataset y/sigma/x, exclusion mask, info."""
     if not spectra:
-        raise CombineError("keine Datensätze")
+        raise CombineError("no datasets")
     if mode == "auto":
         mode = diagnose_alignment(spectra)["mode"]
         if mode == "none":
-            raise CombineError("die x-Bereiche der Datensätze überlappen nicht")
+            raise CombineError("the x ranges of the datasets do not overlap")
     ref = spectra[reference]
     warnings = []
     reported = mode
     if mode == "exact":
         if not all(s.n == ref.n and np.array_equal(s.x, ref.x) for s in spectra):
-            raise CombineError("x-Raster nicht identisch – Ausrichtung 'Index' oder 'Interpolation' wählen")
+            raise CombineError("x grids not identical – choose alignment 'Index' or 'Interpolation'")
         mode = "index"
     if mode == "index":
         if not all(s.n == ref.n for s in spectra):
-            raise CombineError("punktweise Zuordnung braucht gleich viele Punkte in allen Datensätzen")
+            raise CombineError("point-by-point matching requires the same number of points in all datasets")
         x = ref.x.copy()
         ys = [s.y.copy() for s in spectra]
         sigs = [None if s.sigma is None else s.sigma.copy() for s in spectra]
@@ -122,17 +122,17 @@ def align(spectra: list, mode: str = "auto", reference: int = 0) -> dict:
                 excl |= s.exclude
         dev = max((float(np.max(np.abs(s.x - ref.x))) for s in spectra), default=0.0)
         if dev > 0:
-            warnings.append(f"punktweise Zuordnung bei abweichenden x-Werten (max. {dev:.3g}); x des "
-                            f"Referenzdatensatzes wird verwendet")
+            warnings.append(f"Point-by-point matching with differing x values (max. {dev:.3g}); x of the "
+                            f"reference dataset is used")
         interpolated = False
     elif mode == "interpolate":
         lo = max(float(s.x.min()) for s in spectra)
         hi = min(float(s.x.max()) for s in spectra)
         if not lo < hi:
-            raise CombineError("die x-Bereiche der Datensätze überlappen nicht")
+            raise CombineError("the x ranges of the datasets do not overlap")
         for s in spectra:
             if not s.is_strictly_increasing:
-                raise CombineError("Interpolation braucht streng steigende x-Werte in allen Datensätzen")
+                raise CombineError("interpolation requires strictly increasing x values in all datasets")
         m = (ref.x >= lo) & (ref.x <= hi)
         x = ref.x[m]
         ys, sigs, xs = [], [], []
@@ -151,13 +151,13 @@ def align(spectra: list, mode: str = "auto", reference: int = 0) -> dict:
                     excl |= e
             xs.append(x.copy())
         dropped = ref.n - len(x)
-        warnings.append("Interpolation auf das Referenzraster: benachbarte Punkte sind korreliert, Fit-Fehler "
-                        "werden unterschätzt")
+        warnings.append("Interpolation onto the reference grid: neighbouring points are correlated, fit errors "
+                        "are underestimated")
         if dropped:
-            warnings.append(f"{dropped} Punkte außerhalb des gemeinsamen x-Bereichs verworfen")
+            warnings.append(f"{dropped} points outside the common x range discarded")
         interpolated = True
     else:
-        raise CombineError(f"unbekannte Ausrichtung {mode!r}")
+        raise CombineError(f"unknown alignment {mode!r}")
     return {"x": x, "ys": ys, "sigmas": sigs, "xs": xs, "exclude": excl, "mode": reported,
             "interpolated": interpolated, "warnings": warnings}
 
@@ -166,10 +166,10 @@ def _compile(expr: str, names: list) -> Formula:
     try:
         f = Formula(expr, independent=names)
     except FormulaError as e:
-        raise CombineError(f"Ausdruck {expr!r}: {e}") from None
+        raise CombineError(f"expression {expr!r}: {e}") from None
     if f.parameters:
-        raise CombineError(f"Ausdruck {expr!r}: unbekannte Namen {', '.join(f.parameters)} "
-                           f"(verfügbar: {', '.join(names)})")
+        raise CombineError(f"expression {expr!r}: unknown names {', '.join(f.parameters)} "
+                           f"(available: {', '.join(names)})")
     return f
 
 
@@ -225,19 +225,19 @@ def combine(datasets: dict, x_expr: str = "x", y_expr: str = "a", mode: str = "a
         sy, _ = _propagate(fy, args, sigmas, data_idx) if have_sigma_y else (None, False)
         sx, x_unc = _propagate(fx, args, sigmas, data_idx)
     if y_inputs and not have_sigma_y and any(al["sigmas"][aliases.index(a)] is not None for a in y_inputs):
-        report["warnings"].append("nicht alle in y verwendeten Datensätze haben σ – Ergebnis ohne σ")
+        report["warnings"].append("Not all datasets used in y have σ – result without σ")
 
     good = np.isfinite(X) & np.isfinite(Y)
     if sy is not None:
         good &= np.isfinite(sy) & (sy > 0)
     n_bad = int((~good).sum())
     if n_bad:
-        report["warnings"].append(f"{n_bad} Punkte nicht definiert (z. B. Division durch 0, log ≤ 0) – verworfen")
+        report["warnings"].append(f"{n_bad} points undefined (e.g. division by 0, log ≤ 0) – discarded")
     if sy is not None:
         poorly = good & (sy > np.abs(Y))
         if poorly.sum():
-            report["warnings"].append(f"{int(poorly.sum())} Punkte mit σ_y > |y| (z. B. Nenner nahe 0) – "
-                                      "kaum bestimmt")
+            report["warnings"].append(f"{int(poorly.sum())} points with σ_y > |y| (e.g. denominator near 0) – "
+                                      "poorly determined")
     flags = set()
     for s in spectra:
         flags |= set(s.flags)
@@ -248,8 +248,8 @@ def combine(datasets: dict, x_expr: str = "x", y_expr: str = "a", mode: str = "a
         flags.add("x_uncertain")
         aux["sigma_x"] = sx[good]
         rel = float(np.nanmedian(sx[good] / np.maximum(np.abs(X[good]), 1e-300)))
-        report["warnings"].append(f"x hängt von unsicheren Messwerten ab (median σ_x/|x| = {rel:.2g}); "
-                                  "ein gewöhnlicher Fit ignoriert σ_x")
+        report["warnings"].append(f"x depends on uncertain measured values (median σ_x/|x| = {rel:.2g}); "
+                                  "an ordinary fit ignores σ_x")
     if x_expr.strip() != "x":
         order = np.argsort(X[good], kind="stable")
         nonmono = np.any(np.diff(X[good]) < 0)
@@ -263,8 +263,8 @@ def combine(datasets: dict, x_expr: str = "x", y_expr: str = "a", mode: str = "a
         aux["acq_index"] = np.asarray(ref_spec.aux["acq_index"])[good]   # keep acquisition order
     aux = {k: v[order] for k, v in aux.items()}
     if nonmono:
-        report["warnings"].append("neue x-Werte sind nicht monoton in der Aufnahmereihenfolge – Punkte wurden "
-                                  "nach x sortiert (Darstellung als Punkte)")
+        report["warnings"].append("New x values are not monotonic in acquisition order – points were "
+                                  "sorted by x (displayed as points)")
     report["n_output"] = int(len(xg))
     ref = spectra[ref_i]
     meta = {"name": name or f"{y_expr} vs {x_expr}",
@@ -285,8 +285,8 @@ def combine(datasets: dict, x_expr: str = "x", y_expr: str = "a", mode: str = "a
                 out = out.replace(sigma_source=cand)
                 break
         if srcs != {SigmaSource.KNOWN}:
-            report["warnings"].append("σ der Eingänge: " + ", ".join(sorted(x.label for x in srcs))
-                                      + " – fortgepflanztes σ übernimmt diese Herkunft")
+            report["warnings"].append("σ of the inputs: " + ", ".join(sorted(x.label for x in srcs))
+                                      + " – the propagated σ inherits this origin")
     return out, report
 
 

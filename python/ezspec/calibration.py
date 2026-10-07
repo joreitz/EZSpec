@@ -46,7 +46,7 @@ class CalibrationError(ValueError):
 def calibration_from_fit(result, spectrum, name: str = "") -> dict:
     """Plain-JSON calibration from a fit ``result`` of ``spectrum``."""
     if result.covariance is None:
-        raise CalibrationError("der Fit hat keine Kovarianzmatrix – Kalibrierunsicherheit nicht bestimmbar")
+        raise CalibrationError("the fit has no covariance matrix – calibration uncertainty cannot be determined")
     model = result._internals.get("model") or Model.from_dict(result.model_spec)
     variables = list(model.independent_variables)
     mask = np.asarray(result.mask, bool)
@@ -54,7 +54,7 @@ def calibration_from_fit(result, spectrum, name: str = "") -> dict:
     for v in variables:
         key = f"var:{v}"
         if key not in spectrum.aux:
-            raise CalibrationError(f"Variable {v!r} fehlt im Datensatz")
+            raise CalibrationError(f"variable {v!r} missing from the dataset")
         cols.append(np.asarray(spectrum.aux[key], float)[mask])
     pts = np.column_stack(cols)
     if len(pts) > MAX_POINTS:
@@ -93,7 +93,7 @@ def parse_assignments(text: str) -> dict:
         out[m.group(1)] = float(m.group(2).replace(",", "."))
     rest = re.sub(r"([A-Za-z_]\w*)\s*=\s*([-+]?(?:\d+[.,]?\d*|[.,]\d+)(?:[eE][-+]?\d+)?)", "", text)
     if rest.strip(" ;,\t"):
-        raise CalibrationError(f"nicht verstanden: {rest.strip(' ;,')!r} (Format: T=25; p=1.0)")
+        raise CalibrationError(f"not understood: {rest.strip(' ;,')!r} (format: T=25; p=1.0)")
     return out
 
 
@@ -102,7 +102,7 @@ class Calibration:
 
     def __init__(self, d: dict):
         if not d or d.get("format") != FORMAT:
-            raise CalibrationError("keine gültige Kalibrierung (Fit als Kalibrierung übernehmen)")
+            raise CalibrationError("not a valid calibration (adopt a fit as calibration first)")
         self.d = d
         self.model = Model.from_dict(d["model"])
         self.model.apply_values(d["values"])
@@ -119,7 +119,7 @@ class Calibration:
         out = {}
         for v in self.variables:
             if v not in values:
-                raise CalibrationError(f"Wert für {v!r} fehlt")
+                raise CalibrationError(f"value for {v!r} missing")
             out[v] = np.broadcast_to(np.asarray(values[v], float), np.shape(x)).astype(float)
         return out
 
@@ -221,7 +221,7 @@ class Calibration:
         unc = f" ± {s[0]:.3g}" if s is not None else ""
         fixed = ", ".join(f"{k_}={v:g}" for k_, v in values.items() if np.ndim(v) == 0)
         return (f"f({x0:.6g}{'; ' + fixed if fixed else ''}) = {f0:.8g}{unc}; "
-                f"Steigung df/dx = {k:.6g}")
+                f"slope df/dx = {k:.6g}")
 
     def __repr__(self):
         return f"Calibration({self.d.get('source', '')!r}, variables={self.variables})"

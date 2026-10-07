@@ -56,8 +56,8 @@ SQRT_2PI = math.sqrt(2 * math.pi)
 
 # --------------------------------------------------------------------------- peaks
 def _peak_params(*extra):
-    return (ParamDef("area", 1.0, -INF, INF, "Fläche"),
-            ParamDef("center", 0.0, -INF, INF, "Zentrum")) + tuple(extra)
+    return (ParamDef("area", 1.0, -INF, INF, "Area"),
+            ParamDef("center", 0.0, -INF, INF, "Center")) + tuple(extra)
 
 
 def _d_gauss(o, area, center, fwhm):
@@ -105,44 +105,44 @@ def _d_emg(o, area, mu, fwhm_g, tau):
 
 
 _register(ComponentType(
-    "gaussian", "Gauß", "peak",
+    "gaussian", "Gaussian", "peak",
     _peak_params(ParamDef("fwhm", 1.0, 0.0, INF, "FWHM")),
     lambda x, o, area, center, fwhm: ls.gaussian(x, area, center, fwhm),
     "A/(σ√(2π))·exp(−(x−c)²/(2σ²)),  σ = FWHM/(2√(2 ln 2))", _d_gauss))
 _register(ComponentType(
-    "lorentzian", "Lorentz", "peak",
+    "lorentzian", "Lorentzian", "peak",
     _peak_params(ParamDef("fwhm", 1.0, 0.0, INF, "FWHM")),
     lambda x, o, area, center, fwhm: ls.lorentzian(x, area, center, fwhm),
     "A/π · γ/((x−c)² + γ²),  γ = FWHM/2", _d_lorentz))
 _register(ComponentType(
-    "voigt", "Voigt (exakt)", "peak",
-    _peak_params(ParamDef("fwhm_g", 1.0, 0.0, INF, "FWHM Gauß"), ParamDef("fwhm_l", 1.0, 0.0, INF, "FWHM Lorentz")),
+    "voigt", "Voigt (exact)", "peak",
+    _peak_params(ParamDef("fwhm_g", 1.0, 0.0, INF, "Gaussian FWHM"), ParamDef("fwhm_l", 1.0, 0.0, INF, "Lorentzian FWHM")),
     lambda x, o, area, center, fwhm_g, fwhm_l: ls.voigt(x, area, center, fwhm_g, fwhm_l),
-    "A·Re[w(z)]/(σ√(2π)),  z = (x−c+iγ)/(σ√2)  (Faddeeva-Funktion)", _d_voigt,
-    description="Exakte Faltung von Gauß und Lorentz; Gesamt-FWHM wird numerisch exakt berechnet."))
+    "A·Re[w(z)]/(σ√(2π)),  z = (x−c+iγ)/(σ√2)  (Faddeeva function)", _d_voigt,
+    description="Exact convolution of a Gaussian and a Lorentzian; the total FWHM is computed numerically exactly."))
 _register(ComponentType(
     "pseudo_voigt", "Pseudo-Voigt", "peak",
-    _peak_params(ParamDef("fwhm", 1.0, 0.0, INF, "FWHM"), ParamDef("eta", 0.5, 0.0, 1.0, "η (Lorentz-Anteil)")),
+    _peak_params(ParamDef("fwhm", 1.0, 0.0, INF, "FWHM"), ParamDef("eta", 0.5, 0.0, 1.0, "η (Lorentzian fraction)")),
     lambda x, o, area, center, fwhm, eta: ls.pseudo_voigt(x, area, center, fwhm, eta),
     "η·L(x; A, c, FWHM) + (1−η)·G(x; A, c, FWHM)", _d_pv))
 _register(ComponentType(
     "tch_pseudo_voigt", "Pseudo-Voigt (TCH)", "peak",
-    _peak_params(ParamDef("fwhm_g", 1.0, 0.0, INF, "FWHM Gauß"), ParamDef("fwhm_l", 1.0, 0.0, INF, "FWHM Lorentz")),
+    _peak_params(ParamDef("fwhm_g", 1.0, 0.0, INF, "Gaussian FWHM"), ParamDef("fwhm_l", 1.0, 0.0, INF, "Lorentzian FWHM")),
     lambda x, o, area, center, fwhm_g, fwhm_l: ls.tch_pseudo_voigt(x, area, center, fwhm_g, fwhm_l),
-    "Pseudo-Voigt mit Γ, η nach Thompson–Cox–Hastings (1987)", _d_tch,
-    description="Näherung an den Voigt (max. Abweichung ≈1,3 % der Peakhöhe)."))
+    "Pseudo-Voigt with Γ, η after Thompson–Cox–Hastings (1987)", _d_tch,
+    description="Approximation to the Voigt profile (max. deviation ≈1.3 % of the peak height)."))
 _register(ComponentType(
     "pearson7", "Pearson VII", "peak",
     _peak_params(ParamDef("fwhm", 1.0, 0.0, INF, "FWHM"), ParamDef("m", 2.0, 0.501, 1000.0, "Exponent m")),
     lambda x, o, area, center, fwhm, m: ls.pearson7(x, area, center, fwhm, m),
     "A·Γ(m)/(√π Γ(m−½) a)·[1 + ((x−c)/a)²]^(−m),  a = FWHM/(2√(2^(1/m)−1))", _d_p7))
 _register(ComponentType(
-    "emg", "Exp. mod. Gauß (EMG)", "peak",
-    (ParamDef("area", 1.0, -INF, INF, "Fläche"), ParamDef("mu", 0.0, -INF, INF, "μ (Gauß-Zentrum)"),
-     ParamDef("fwhm_g", 1.0, 0.0, INF, "FWHM Gauß"), ParamDef("tau", 1.0, 0.0, INF, "τ (Ausläufer)")),
+    "emg", "Exp. mod. Gaussian (EMG)", "peak",
+    (ParamDef("area", 1.0, -INF, INF, "Area"), ParamDef("mu", 0.0, -INF, INF, "μ (Gaussian center)"),
+     ParamDef("fwhm_g", 1.0, 0.0, INF, "Gaussian FWHM"), ParamDef("tau", 1.0, 0.0, INF, "τ (tail)")),
     lambda x, o, area, mu, fwhm_g, tau: ls.emg(x, area, mu, fwhm_g, tau),
-    "Gauß(μ, σ) ⊗ exp(−x/τ)/τ  (Ausläufer zu großen x)", _d_emg,
-    description="'center' der abgeleiteten Größen ist die Position des Maximums."))
+    "Gaussian(μ, σ) ⊗ exp(−x/τ)/τ  (tail towards large x)", _d_emg,
+    description="'center' among the derived quantities is the position of the maximum."))
 
 
 # --------------------------------------------------------------------------- baseline terms
@@ -160,21 +160,21 @@ def _poly_func(x, o, **p):
 
 
 _register(ComponentType(
-    "constant", "Konstante", "baseline", (ParamDef("c", 0.0, label="c"),),
+    "constant", "Constant", "baseline", (ParamDef("c", 0.0, label="c"),),
     lambda x, o, c: np.full(np.shape(x), c, float), "c", linear=True))
 _register(ComponentType(
-    "linear", "Gerade", "baseline",
-    (ParamDef("intercept", 0.0, label="Achsenabschnitt bei x0"), ParamDef("slope", 0.0, label="Steigung")),
+    "linear", "Straight line", "baseline",
+    (ParamDef("intercept", 0.0, label="Intercept at x0"), ParamDef("slope", 0.0, label="Slope")),
     lambda x, o, intercept, slope: intercept + slope * (np.asarray(x, float) - o.get("x0", 0.0)),
     "intercept + slope·(x − x0)", linear=True))
 _register(ComponentType(
-    "polynomial", "Polynom", "baseline", (),     # parameters depend on options["order"]
+    "polynomial", "Polynomial", "baseline", (),     # parameters depend on options["order"]
     _poly_func, "Σ c_k (x − x0)^k", linear=True))
 
 
 # --------------------------------------------------------------------------- formula
 _register(ComponentType(
-    "formula", "Formel", "formula", (), None, "frei definierbar"))
+    "formula", "Formula", "formula", (), None, "user-defined"))
 
 
 # --------------------------------------------------------------------------- instance
@@ -272,7 +272,7 @@ class Component:
                 elif i == 0:
                     args.append(x)
                 else:
-                    raise KeyError(f"unabhängige Variable {name!r} fehlt in den Daten")
+                    raise KeyError(f"independent variable {name!r} is missing from the data")
             return f(*args, **local)
         return np.asarray(self.type.func(x, self.options, **local), float)
 

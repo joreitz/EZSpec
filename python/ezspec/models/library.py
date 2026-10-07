@@ -18,45 +18,45 @@ class Template:
     expression: str
     defaults: dict
     description: str = ""
-    category: str = "Allgemein"
+    category: str = "General"
     bounds: dict | None = None
 
 
 TEMPLATES = [
-    Template("Gerade", "a + b*x", {"a": 0.0, "b": 1.0}, "y = a + b·x", "Polynome"),
-    Template("Parabel", "a + b*x + c2*x^2", {"a": 0.0, "b": 1.0, "c2": 0.0}, "Polynom 2. Grades", "Polynome"),
-    Template("Kubisch", "a + b*x + c2*x^2 + c3*x^3", {"a": 0.0, "b": 1.0, "c2": 0.0, "c3": 0.0},
-             "Polynom 3. Grades", "Polynome"),
-    Template("Exp. Zerfall (1)", "y0 + A*exp(-(x - x0)/tau)", {"y0": 0.0, "A": 1.0, "x0": 0.0, "tau": 1.0},
-             "x0 ist fest zu halten (sonst mit A vollständig korreliert)", "Exponentiell",
+    Template("Straight line", "a + b*x", {"a": 0.0, "b": 1.0}, "y = a + b·x", "Polynomials"),
+    Template("Parabola", "a + b*x + c2*x^2", {"a": 0.0, "b": 1.0, "c2": 0.0}, "2nd-degree polynomial", "Polynomials"),
+    Template("Cubic", "a + b*x + c2*x^2 + c3*x^3", {"a": 0.0, "b": 1.0, "c2": 0.0, "c3": 0.0},
+             "3rd-degree polynomial", "Polynomials"),
+    Template("Exp. decay (1)", "y0 + A*exp(-(x - x0)/tau)", {"y0": 0.0, "A": 1.0, "x0": 0.0, "tau": 1.0},
+             "keep x0 fixed (otherwise fully correlated with A)", "Exponential",
              {"tau": (0.0, None)}),
-    Template("Exp. Zerfall (2)", "y0 + A1*exp(-x/tau1) + A2*exp(-x/tau2)",
+    Template("Exp. decay (2)", "y0 + A1*exp(-x/tau1) + A2*exp(-x/tau2)",
              {"y0": 0.0, "A1": 1.0, "tau1": 1.0, "A2": 0.5, "tau2": 10.0},
-             "Biexponentiell; lineare Standardfehler oft unzuverlässig → Profil-CI nutzen", "Exponentiell",
+             "Biexponential; linear standard errors are often unreliable → use the profile CI", "Exponential",
              {"tau1": (0.0, None), "tau2": (0.0, None)}),
-    Template("Exp. Wachstum", "y0 + A*exp(x/t)", {"y0": 0.0, "A": 1.0, "t": 1.0}, "", "Exponentiell"),
-    Template("Gestreckte Exponentialfkt.", "y0 + A*exp(-(x/tau)^beta)",
-             {"y0": 0.0, "A": 1.0, "tau": 1.0, "beta": 1.0}, "Kohlrausch–Williams–Watts", "Exponentiell",
+    Template("Exp. growth", "y0 + A*exp(x/t)", {"y0": 0.0, "A": 1.0, "t": 1.0}, "", "Exponential"),
+    Template("Stretched exponential", "y0 + A*exp(-(x/tau)^beta)",
+             {"y0": 0.0, "A": 1.0, "tau": 1.0, "beta": 1.0}, "Kohlrausch–Williams–Watts", "Exponential",
              {"tau": (0.0, None), "beta": (0.0, 1.0)}),
-    Template("Potenzgesetz", "A*x^b", {"A": 1.0, "b": 1.0}, "y = A·x^b (x > 0)", "Allgemein"),
-    Template("Logarithmus", "a + b*ln(x)", {"a": 0.0, "b": 1.0}, "", "Allgemein"),
-    Template("Boltzmann-Sigmoid", "A2 + (A1 - A2)/(1 + exp((x - x0)/dx))",
+    Template("Power law", "A*x^b", {"A": 1.0, "b": 1.0}, "y = A·x^b (x > 0)", "General"),
+    Template("Logarithm", "a + b*ln(x)", {"a": 0.0, "b": 1.0}, "", "General"),
+    Template("Boltzmann sigmoid", "A2 + (A1 - A2)/(1 + exp((x - x0)/dx))",
              {"A1": 0.0, "A2": 1.0, "x0": 0.0, "dx": 1.0}, "", "Sigmoidal"),
-    Template("Logistisch (4PL)", "A2 + (A1 - A2)/(1 + (x/x0)^p)", {"A1": 0.0, "A2": 1.0, "x0": 1.0, "p": 1.0},
-             "Dosis-Wirkung", "Sigmoidal"),
+    Template("Logistic (4PL)", "A2 + (A1 - A2)/(1 + (x/x0)^p)", {"A1": 0.0, "A2": 1.0, "x0": 1.0, "p": 1.0},
+             "Dose–response", "Sigmoidal"),
     Template("Hill", "y0 + (ymax - y0)*x^n/(k^n + x^n)", {"y0": 0.0, "ymax": 1.0, "k": 1.0, "n": 1.0},
              "", "Sigmoidal"),
-    Template("Michaelis–Menten", "vmax*x/(km + x)", {"vmax": 1.0, "km": 1.0}, "", "Kinetik"),
+    Template("Michaelis–Menten", "vmax*x/(km + x)", {"vmax": 1.0, "km": 1.0}, "", "Kinetics"),
     Template("Arrhenius", "A*exp(-Ea/(8.314462618*x))", {"A": 1.0, "Ea": 1e4},
-             "x = T in K, Ea in J/mol", "Kinetik"),
-    Template("Sinus", "y0 + A*sin(2*pi*f*x + phi)", {"y0": 0.0, "A": 1.0, "f": 1.0, "phi": 0.0}, "",
-             "Periodisch"),
-    Template("Gedämpfte Schwingung", "y0 + A*exp(-x/tau)*sin(2*pi*f*x + phi)",
-             {"y0": 0.0, "A": 1.0, "tau": 1.0, "f": 1.0, "phi": 0.0}, "", "Periodisch"),
-    Template("Gauß (Höhe, σ)", "y0 + h*exp(-(x - xc)^2/(2*s^2))", {"y0": 0.0, "h": 1.0, "xc": 0.0, "s": 1.0},
-             "Origin-artige Parametrisierung (Höhe statt Fläche)", "Peaks"),
-    Template("Lorentz (Höhe)", "y0 + h/(1 + ((x - xc)/g)^2)", {"y0": 0.0, "h": 1.0, "xc": 0.0, "g": 1.0},
-             "g = halbe Halbwertsbreite", "Peaks"),
+             "x = T in K, Ea in J/mol", "Kinetics"),
+    Template("Sine", "y0 + A*sin(2*pi*f*x + phi)", {"y0": 0.0, "A": 1.0, "f": 1.0, "phi": 0.0}, "",
+             "Periodic"),
+    Template("Damped oscillation", "y0 + A*exp(-x/tau)*sin(2*pi*f*x + phi)",
+             {"y0": 0.0, "A": 1.0, "tau": 1.0, "f": 1.0, "phi": 0.0}, "", "Periodic"),
+    Template("Gaussian (height, σ)", "y0 + h*exp(-(x - xc)^2/(2*s^2))", {"y0": 0.0, "h": 1.0, "xc": 0.0, "s": 1.0},
+             "Origin-style parametrization (height instead of area)", "Peaks"),
+    Template("Lorentzian (height)", "y0 + h/(1 + ((x - xc)/g)^2)", {"y0": 0.0, "h": 1.0, "xc": 0.0, "g": 1.0},
+             "g = half width at half maximum (HWHM)", "Peaks"),
 ]
 TEMPLATE_BY_NAME = {t.name: t for t in TEMPLATES}
 
@@ -70,7 +70,7 @@ def add_template(model: Model, name: str, prefix: str = "") -> None:
             c.settings[p].min = lo
         if hi is not None:
             c.settings[p].max = hi
-    if t.name.startswith("Exp. Zerfall (1)"):
+    if t.name.startswith("Exp. decay (1)"):
         c.settings["x0"].vary = False
 
 
@@ -168,10 +168,10 @@ def find_peaks(x, y, prominence: float | None = None, min_fwhm: float | None = N
 
 # ----------------------------------------------------------------------------- surfaces
 SURFACES = {
-    "plane": "Ebene: c0 + cx·(x−x0) + cv·(v−v0)",
-    "bilinear": "Ebene + Wechselwirkung: … + cxv·(x−x0)(v−v0)",
-    "quad_x": "quadratisch in x: … + cxx·(x−x0)²",
-    "quadratic": "voll quadratisch: … + cxx·(x−x0)² + cvv·(v−v0)² + cxv·(x−x0)(v−v0)",
+    "plane": "Plane: c0 + cx·(x−x0) + cv·(v−v0)",
+    "bilinear": "Plane + interaction: … + cxv·(x−x0)(v−v0)",
+    "quad_x": "Quadratic in x: … + cxx·(x−x0)²",
+    "quadratic": "Full quadratic: … + cxx·(x−x0)² + cvv·(v−v0)² + cxv·(x−x0)(v−v0)",
 }
 
 
@@ -187,7 +187,7 @@ def surface_expression(kind: str, var: str, x0: float = 0.0, v0: float = 0.0) ->
     inside the data makes c0 the value at (x0, v0) and keeps the parameters
     weakly correlated."""
     if kind not in SURFACES:
-        raise ValueError(f"unbekannte Fläche {kind!r}")
+        raise ValueError(f"unknown surface {kind!r}")
 
     def centred(name, c):
         c = _nice(c)

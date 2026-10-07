@@ -48,7 +48,7 @@ def find_sweeps(s, tolerance: float = 0.01, min_points: int = 5) -> list:
     """Sweeps of a spectrum in acquisition order (requires ``aux['acq_index']``)."""
     order = acquisition_order(s)
     if order is None:
-        raise ValueError("Aufnahmereihenfolge unbekannt – Datei neu importieren")
+        raise ValueError("acquisition order unknown – re-import the file")
     xs = s.x[order]
     n = len(xs)
     if n < 2:

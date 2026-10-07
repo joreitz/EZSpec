@@ -73,11 +73,11 @@ def information_criteria(n: int, p: int, rss: float, chi2: float | None, sigma_k
     elif sigma_known:
         k = p
         base = chi2
-        form = "σ bekannt: χ² + 2K, K = p"
+        form = "σ known: χ² + 2K, K = p"
     else:
         k = p + 1
         base = n * math.log(rss / n) if rss > 0 else float("-inf")
-        form = "σ unbekannt (herausprofiliert): N·ln(RSS/N) + 2K, K = p + 1"
+        form = "σ unknown (profiled out): N·ln(RSS/N) + 2K, K = p + 1"
     aic = base + 2 * k
     bic = base + k * math.log(n)
     aicc = aic + 2.0 * k * (k + 1) / (n - k - 1) if n - k - 1 > 0 else float("nan")

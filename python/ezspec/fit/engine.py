@@ -35,11 +35,11 @@ from .result import DerivedResult, FitResult, FitStatistics, FitWarning, ParamRe
 METHODS = {
     "leastsq": "Levenberg–Marquardt (MINPACK)",
     "least_squares": "Trust Region Reflective (SciPy)",
-    "nelder": "Nelder–Mead (+ LM-Politur)",
-    "powell": "Powell (+ LM-Politur)",
-    "differential_evolution": "Differential Evolution, global (+ LM-Politur)",
-    "basinhopping": "Basin-Hopping, global (+ LM-Politur)",
-    "ampgo": "AMPGO, global (+ LM-Politur)",
+    "nelder": "Nelder–Mead (+ LM polish)",
+    "powell": "Powell (+ LM polish)",
+    "differential_evolution": "Differential Evolution, global (+ LM polish)",
+    "basinhopping": "Basin-Hopping, global (+ LM polish)",
+    "ampgo": "AMPGO, global (+ LM polish)",
 }
 GLOBAL_OR_SCALAR = {"nelder", "powell", "differential_evolution", "basinhopping", "ampgo"}
 
@@ -221,7 +221,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
     constraints are taken from the model's parameter settings."""
     opt = options if isinstance(options, FitOptions) else FitOptions.from_dict(options)
     if opt.method not in METHODS:
-        raise FitError(f"unbekannte Methode {opt.method!r}")
+        raise FitError(f"unknown method {opt.method!r}")
     t_start = time.perf_counter()
     mask = _select(spectrum, opt)
     x = spectrum.x[mask]
@@ -235,34 +235,34 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         weighting = "sigma" if spectrum.sigma is not None else "none"
     if weighting == "sigma":
         if spectrum.sigma is None:
-            raise FitError("Gewichtung 'sigma' gewählt, aber die Daten haben kein σ "
-                           "(σ-Spalte importieren oder 'Rauschen schätzen' anwenden)")
+            raise FitError("weighting 'sigma' selected, but the data have no σ "
+                           "(import a σ column or apply 'Estimate noise → σ')")
         sigma = spectrum.sigma[mask].astype(float)
         source = spectrum.sigma_source
         sigma_label = source.label
     elif weighting == "none":
         sigma = None
         source = SigmaSource.UNKNOWN
-        sigma_label = SigmaSource.UNKNOWN.label + " (Einheitsgewichte)"
+        sigma_label = SigmaSource.UNKNOWN.label + " (unit weights)"
     elif weighting == "effective_variance":
         if spectrum.sigma is None or "sigma_x" not in spectrum.aux:
-            raise FitError("Effektive Varianz braucht σ_y und σ_x (z. B. aus 'Daten verrechnen')")
+            raise FitError("effective variance requires σ_y and σ_x (e.g. from 'Combine datasets')")
         sigma = spectrum.sigma[mask].astype(float)
         sigma_x = np.asarray(spectrum.aux["sigma_x"], float)[mask]
         source = spectrum.sigma_source
-        sigma_label = source.label + " + σ_x (effektive Varianz, Orear 1982)"
+        sigma_label = source.label + " + σ_x (effective variance, Orear 1982)"
     elif weighting == "poisson_model":
         sigma = None
         source = None
-        sigma_label = "Poisson σ² = Modell (IRLS ≙ Poisson-ML)"
+        sigma_label = "Poisson σ² = model (IRLS ≙ Poisson ML)"
         if np.any(y < 0):
-            warnings.append(FitWarning("POISSON_NEGATIVE", "Poisson-Gewichtung bei negativen Daten – "
-                                       "sind das wirklich Zählraten (keine abgezogene Baseline)?"))
+            warnings.append(FitWarning("POISSON_NEGATIVE", "Poisson weighting with negative data – "
+                                       "are these really counts (no subtracted baseline)?"))
         if "baseline_subtracted" in spectrum.flags or "normalized" in spectrum.flags:
-            warnings.append(FitWarning("POISSON_PROCESSED", "Poisson-Statistik gilt nur für unbearbeitete "
-                                       "Zählraten (Baseline abgezogen/normiert)."))
+            warnings.append(FitWarning("POISSON_PROCESSED", "Poisson statistics apply only to unprocessed "
+                                       "counts (baseline subtracted/normalized)."))
     else:
-        raise FitError(f"unbekannte Gewichtung {weighting!r}")
+        raise FitError(f"unknown weighting {weighting!r}")
     sigma_known = weighting in ("sigma", "poisson_model", "effective_variance")
 
     # ---------------------------------------------------------------- covariance mode
@@ -270,30 +270,30 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
     if cov_mode == "auto":
         cov_mode = "absolute" if sigma_known else "scaled"
     if cov_mode == "absolute" and not sigma_known:
-        warnings.append(FitWarning("ABSOLUTE_WITHOUT_SIGMA", "Absolute Kovarianz ohne bekanntes σ ist "
-                                   "bedeutungslos – es wird mit der Residuenvarianz skaliert.", "warning"))
+        warnings.append(FitWarning("ABSOLUTE_WITHOUT_SIGMA", "Absolute covariance without known σ is "
+                                   "meaningless – scaling by the residual variance instead.", "warning"))
         cov_mode = "scaled"
     if cov_mode == "scaled" and sigma_known:
-        warnings.append(FitWarning("SCALED_KNOWN_SIGMA", "Kovarianz trotz bekanntem σ mit χ²_ν skaliert: "
-                                   "eine Fehlanpassung erscheint dann als größere Fehlerbalken statt als "
-                                   "Warnung.", "warning"))
+        warnings.append(FitWarning("SCALED_KNOWN_SIGMA", "Covariance scaled by χ²_ν although σ is known: "
+                                   "a misfit then shows up as larger error bars instead of as a "
+                                   "warning.", "warning"))
     scale_covar = cov_mode == "scaled"
 
     # ---------------------------------------------------------------- upstream processing
     flag_warnings = {
-        "smoothed": ("SMOOTHED_INPUT", "Fit auf geglätteten Daten: Rauschen korreliert, Peaks verbreitert/"
-                     "erniedrigt; Unsicherheiten werden stark unterschätzt (O'Haver). Ungeglättet fitten!",
+        "smoothed": ("SMOOTHED_INPUT", "Fit on smoothed data: noise is correlated, peaks are broadened/"
+                     "lowered; uncertainties are strongly underestimated (O'Haver). Fit unsmoothed data!",
                      "warning"),
-        "interpolated": ("INTERPOLATED_INPUT", "Fit auf interpolierten/neu abgetasteten Daten: benachbarte "
-                         "Punkte korreliert, effektives N kleiner; χ² und Fehler nicht exakt.", "warning"),
-        "normalized": ("NORMALIZED_INPUT", "Daten normiert: Amplituden/Flächen beziehen sich auf die "
-                       "normierte Skala.", "info"),
-        "x_uncertain": ("X_UNCERTAIN", "x-Werte haben eine Unsicherheit (σ_x, z. B. aus Verrechnung von "
-                        "Messreihen). Gewöhnliche kleinste Quadrate ignorieren σ_x; Gewichtung 'effektive Varianz' "
-                        "berücksichtigt sie.", "warning"),
-        "baseline_subtracted": ("BASELINE_UNCERTAINTY", "Vorab abgezogene Baseline: deren Unsicherheit ist "
-                                "nicht in den Fehlern enthalten (systematisch; z. B. λ variieren oder "
-                                "lineare Baseline mitfitten).", "info"),
+        "interpolated": ("INTERPOLATED_INPUT", "Fit on interpolated/resampled data: neighbouring "
+                         "points are correlated, effective N is smaller; χ² and errors are not exact.", "warning"),
+        "normalized": ("NORMALIZED_INPUT", "Data normalized: amplitudes/areas refer to the "
+                       "normalized scale.", "info"),
+        "x_uncertain": ("X_UNCERTAIN", "x values have an uncertainty (σ_x, e.g. from combining "
+                        "series). Ordinary least squares ignores σ_x; weighting 'effective variance' "
+                        "accounts for it.", "warning"),
+        "baseline_subtracted": ("BASELINE_UNCERTAINTY", "Baseline subtracted beforehand: its uncertainty is "
+                                "not included in the errors (systematic; e.g. vary λ or "
+                                "fit a linear baseline simultaneously).", "info"),
     }
     for flag, (code, msg, sev) in flag_warnings.items():
         if flag in spectrum.flags:
@@ -301,40 +301,40 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
     from ..sweeps import count_sweeps, is_multivalued
     if is_multivalued(spectrum) and not model.independent_variables:   # y(x, v): repeats in x are expected
         c = count_sweeps(spectrum)
-        warnings.append(FitWarning("MULTI_SWEEP", f"Daten enthalten mehrere Durchläufe ({c['up']} steigend, "
-                                   f"{c['down']} fallend): x ist mehrdeutig. Hin- und Rückweg getrennt auswerten "
-                                   "(Schritt 'Durchläufe auswählen' oder 'mitteln').", "warning"))
+        warnings.append(FitWarning("MULTI_SWEEP", f"Data contain several sweeps ({c['up']} up, "
+                                   f"{c['down']} down): x is ambiguous. Evaluate up and down sweeps separately "
+                                   "(step 'Select sweeps (up/down)' or 'Average sweeps (same direction)').", "warning"))
     cal = spectrum.meta.get("calibration")
     if "x_calibrated" in spectrum.flags and cal:
-        warnings.append(FitWarning("X_CALIBRATION", f"x-Achse kalibriert ({cal.get('source', '')}): systematische "
-                                   f"Kalibrierunsicherheit σ_x,cal ≈ {cal.get('sigma_median', float('nan')):.3g} "
-                                   f"(max. {cal.get('sigma_max', float('nan')):.3g}) ist nicht in den Fehlern "
-                                   "enthalten; Lageparameter erben sie vollständig.", "info"))
+        warnings.append(FitWarning("X_CALIBRATION", f"x axis calibrated ({cal.get('source', '')}): the systematic "
+                                   f"calibration uncertainty σ_x,cal ≈ {cal.get('sigma_median', float('nan')):.3g} "
+                                   f"(max. {cal.get('sigma_max', float('nan')):.3g}) is not included in the errors; "
+                                   "position parameters inherit it in full.", "info"))
     if sigma_known and source is SigmaSource.POISSON_DATA:
-        warnings.append(FitWarning("NEYMAN_WEIGHTS", "σ = √y (Neyman) verzerrt Amplituden und Flächen nach "
-                                   "unten, auch bei hohen Zählraten (Humphrey et al. 2009). Besser "
-                                   "Gewichtung 'Poisson (σ² = Modell)'.", "warning"))
+        warnings.append(FitWarning("NEYMAN_WEIGHTS", "σ = √y (Neyman) biases amplitudes and areas "
+                                   "downwards, even at high count rates (Humphrey et al. 2009). Prefer "
+                                   "weighting 'Poisson: σ² = model'.", "warning"))
     if opt.loss != "linear":
         if opt.method != "least_squares":
-            raise FitError("robuste Verlustfunktionen nur mit Methode 'least_squares'")
-        warnings.append(FitWarning("ROBUST_LOSS", f"Robuste Verlustfunktion '{opt.loss}': Kovarianz und χ² "
-                                   "sind nicht die üblichen Gauß-Größen.", "warning"))
+            raise FitError("robust loss functions require method 'least_squares'")
+        warnings.append(FitWarning("ROBUST_LOSS", f"Robust loss function '{opt.loss}': covariance and χ² "
+                                   "are not the usual Gaussian quantities.", "warning"))
 
     # ---------------------------------------------------------------- parameters
     params = model.make_params()
     nvary = sum(1 for p in params.values() if p.vary)
     if nvary == 0:
-        raise FitError("keine freien Parameter")
+        raise FitError("no free parameters")
     if len(x) <= nvary:
-        raise FitError(f"zu wenige Datenpunkte ({len(x)}) für {nvary} freie Parameter")
+        raise FitError(f"too few data points ({len(x)}) for {nvary} free parameters")
     if opt.method == "differential_evolution":
         bad = [n for n, p in params.items() if p.vary and not (np.isfinite(p.min) and np.isfinite(p.max))]
         if bad:
-            raise FitError(f"Differential Evolution braucht endliche Grenzen für: {', '.join(bad)}")
+            raise FitError(f"Differential Evolution requires finite bounds for: {', '.join(bad)}")
     init_values = {k: p.value for k, p in params.items()}
     init_fit = model.evaluate(x, params, variables)
     if not np.all(np.isfinite(init_fit)):
-        raise FitError("Modell liefert mit den Startwerten NaN/Inf – Startwerte oder Grenzen prüfen")
+        raise FitError("model returns NaN/Inf at the start values – check start values or bounds")
 
     # ---------------------------------------------------------------- minimisation
     def run_once(start_params, w):
@@ -367,7 +367,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
                 mini, res, residual, method_used = run_once(current, w)
                 fbest = model.evaluate(x, res.params, variables)
                 if np.any(fbest <= 0):
-                    raise FitError("Poisson-Gewichtung: Modell ≤ 0 an einigen Punkten")
+                    raise FitError("Poisson weighting: model ≤ 0 at some points")
                 w_new = 1.0 / np.sqrt(fbest)
                 change = np.max(np.abs(w_new - w) / w)
                 w = w_new
@@ -375,7 +375,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
                 if change < 1e-8:
                     break
             else:
-                warnings.append(FitWarning("POISSON_NOT_CONVERGED", "Poisson-IRLS nicht konvergiert."))
+                warnings.append(FitWarning("POISSON_NOT_CONVERGED", "Poisson IRLS did not converge."))
             # final fit with converged weights so covariance corresponds to sigma^2 = model
             mini, res, residual, method_used = run_once(current, w)
             sigma = 1.0 / w
@@ -396,19 +396,19 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
                 if change < 1e-8:
                     break
             else:
-                warnings.append(FitWarning("EV_NOT_CONVERGED", "Effektive-Varianz-Iteration nicht konvergiert."))
+                warnings.append(FitWarning("EV_NOT_CONVERGED", "Effective-variance iteration did not converge."))
             mini, res, residual, method_used = run_once(current, w)
             sigma = 1.0 / w
             warnings = [w_ for w_ in warnings if w_.code != "X_UNCERTAIN"]
-            warnings.append(FitWarning("EFFECTIVE_VARIANCE", "σ_x über effektive Varianz berücksichtigt (Näherung "
-                                       "erster Ordnung an Fehler-in-beiden-Variablen; gut für kleine σ_x).", "info"))
+            warnings.append(FitWarning("EFFECTIVE_VARIANCE", "σ_x accounted for via effective variance (first-order "
+                                       "approximation to errors-in-variables; good for small σ_x).", "info"))
         else:
             w = 1.0 / sigma if sigma is not None else np.ones_like(y)
             mini, res, residual, method_used = run_once(params, w)
     except FitError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise FitError(f"Fit fehlgeschlagen: {type(exc).__name__}: {exc}") from exc
+        raise FitError(f"fit failed: {type(exc).__name__}: {exc}") from exc
 
     # ---------------------------------------------------------------- refinement & covariance
     best = res.params
@@ -456,9 +456,9 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         covar = None
     if covar is None:
         cov_mode_final = "unavailable"
-        warnings.append(FitWarning("NO_COVARIANCE", "Kovarianzmatrix nicht verfügbar (Jacobi-Matrix "
-                                   "rangdefizient/singulär) – mindestens ein Parameter ist durch die Daten "
-                                   "nicht bestimmt.", "warning"))
+        warnings.append(FitWarning("NO_COVARIANCE", "Covariance matrix not available (Jacobian "
+                                   "rank-deficient/singular) – at least one parameter is not determined "
+                                   "by the data.", "warning"))
     else:
         cov_mode_final = cov_mode
     corr = None
@@ -484,30 +484,30 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         pval = float(sps.chi2.sf(chi2, dof))
         if abs(redchi - 1) > 3 * half:
             if redchi > 1:
-                warnings.append(FitWarning("REDCHI_HIGH", f"χ²_ν = {redchi:.3g} liegt deutlich über 1 "
-                                           f"(3σ-Band ±{3 * half:.2g}): Modell beschreibt die Daten nicht im "
-                                           "Rahmen von σ, oder σ ist unterschätzt.", "warning"))
+                warnings.append(FitWarning("REDCHI_HIGH", f"χ²_ν = {redchi:.3g} is well above 1 "
+                                           f"(3σ band ±{3 * half:.2g}): the model does not describe the data "
+                                           "within σ, or σ is underestimated.", "warning"))
             else:
-                warnings.append(FitWarning("REDCHI_LOW", f"χ²_ν = {redchi:.3g} liegt deutlich unter 1: σ "
-                                           "überschätzt oder Überanpassung.", "warning"))
+                warnings.append(FitWarning("REDCHI_LOW", f"χ²_ν = {redchi:.3g} is well below 1: σ "
+                                           "overestimated or overfitting.", "warning"))
     if dof < 5:
-        warnings.append(FitWarning("FEW_DOF", f"nur ν = {dof} Freiheitsgrade", "warning"))
+        warnings.append(FitWarning("FEW_DOF", f"only ν = {dof} degrees of freedom", "warning"))
 
     zdiag = zres if sigma_known else r / (np.sqrt(rss / dof) if dof > 0 and rss > 0 else 1.0)
     runs = S.runs_test(zdiag)
     if np.isfinite(runs.get("p_too_few", np.nan)) and runs["p_too_few"] < 0.01:
-        warnings.append(FitWarning("RUNS_TEST", f"Runs-Test: {runs['runs']} statt ~{runs['expected']:.0f} "
-                                   f"Vorzeichenwechsel (p = {runs['p_too_few']:.2g}) – systematische "
-                                   "Abweichung, Modell unvollständig?", "warning"))
+        warnings.append(FitWarning("RUNS_TEST", f"Runs test: {runs['runs']} instead of ~{runs['expected']:.0f} "
+                                   f"runs of residual signs (p = {runs['p_too_few']:.2g}) – systematic "
+                                   "deviation, model incomplete?", "warning"))
     lag1 = S.lag1_autocorrelation(zdiag)
     if np.isfinite(lag1) and abs(lag1) > 3 / np.sqrt(n):
-        warnings.append(FitWarning("AUTOCORR", f"Residuen autokorreliert (ρ₁ = {lag1:.2f} > 3/√N)",
+        warnings.append(FitWarning("AUTOCORR", f"Residuals autocorrelated (ρ₁ = {lag1:.2f} > 3/√N)",
                                    "info" if "RUNS_TEST" in {w_.code for w_ in warnings} else "warning"))
 
     if not np.isfinite(cond) or cond > 1e12:
-        warnings.append(FitWarning("ILL_CONDITIONED", f"Jacobi-Matrix (fast) rangdefizient (Kondition "
-                                   f"{cond:.2g}): mindestens eine Parameterkombination ist durch die Daten "
-                                   "kaum bestimmt.", "warning"))
+        warnings.append(FitWarning("ILL_CONDITIONED", f"Jacobian (nearly) rank-deficient (condition number "
+                                   f"{cond:.2g}): at least one parameter combination is poorly determined "
+                                   "by the data.", "warning"))
 
     # ---------------------------------------------------------------- parameters
     presults = {}
@@ -529,15 +529,15 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
                                      float(init_values[name]), bool(par.vary), float(par.min),
                                      float(par.max), par.expr, at, near)
         if at:
-            warnings.append(FitWarning("AT_BOUND", f"{name} liegt am Bound ({at} = "
-                                       f"{par.min if at == 'min' else par.max:g}); Standardfehler nicht "
-                                       "belastbar – Modell/Grenzen prüfen.", "warning"))
+            warnings.append(FitWarning("AT_BOUND", f"{name} is at a bound ({at} = "
+                                       f"{par.min if at == 'min' else par.max:g}); standard error not "
+                                       "reliable – check model/bounds.", "warning"))
         elif near:
-            warnings.append(FitWarning("NEAR_BOUND", f"{name}: Bound liegt innerhalb von 2 SE – symmetrischer "
-                                       "Fehler irreführend, Profil-CI verwenden.", "info"))
+            warnings.append(FitWarning("NEAR_BOUND", f"{name}: bound lies within 2 SE – symmetric "
+                                       "error misleading, use the profile CI.", "info"))
     for a, b, c in _high_corr(names, corr):
-        warnings.append(FitWarning("HIGH_CORRELATION", f"ρ({a}, {b}) = {c:+.3f}: Parameter stark korreliert, "
-                                   "einzeln schlecht bestimmt (Constraints erwägen).", "info"))
+        warnings.append(FitWarning("HIGH_CORRELATION", f"ρ({a}, {b}) = {c:+.3f}: parameters strongly correlated, "
+                                   "individually poorly determined (consider constraints).", "info"))
 
     # ---------------------------------------------------------------- derived quantities
     derived = []
@@ -564,7 +564,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
                                          None if se is None else float(se)))
 
     if not res.success:
-        warnings.append(FitWarning("NOT_CONVERGED", f"Optimierer meldet keinen Erfolg: {res.message}", "error"))
+        warnings.append(FitWarning("NOT_CONVERGED", f"Optimizer reports no success: {res.message}", "error"))
 
     stats = FitStatistics(
         n_points=n, n_varys=p, dof=dof,
@@ -578,7 +578,7 @@ def fit(spectrum: Spectrum, model: Model, options: FitOptions | dict | None = No
         jacobian_condition=cond, poisson_deviance=deviance,
     )
     if np.isnan(ic["aicc"]):
-        warnings.append(FitWarning("AICC_UNDEFINED", "AICc undefiniert (K ≥ N − 1).", "info"))
+        warnings.append(FitWarning("AICC_UNDEFINED", "AICc undefined (K ≥ N − 1).", "info"))
 
     full_sigma = None if sigma is None else np.asarray(sigma, float)
     provenance = {

@@ -75,26 +75,26 @@ class Formula:
         self.independent = tuple(independent)
         src = preprocess(expression)
         if not src:
-            raise FormulaError("leerer Ausdruck")
+            raise FormulaError("empty expression")
         try:
             tree = ast.parse(src, mode="eval")
         except SyntaxError as exc:
-            raise FormulaError(f"Syntaxfehler: {exc.msg} (Spalte {exc.offset})") from None
+            raise FormulaError(f"syntax error: {exc.msg} (column {exc.offset})") from None
         names = []
         for node in ast.walk(tree):
             if not isinstance(node, _ALLOWED_NODES):
-                raise FormulaError(f"nicht erlaubtes Element: {type(node).__name__}")
+                raise FormulaError(f"element not allowed: {type(node).__name__}")
             if isinstance(node, ast.Constant) and not isinstance(node.value, (int, float)):
-                raise FormulaError("nur Zahlen-Konstanten erlaubt")
+                raise FormulaError("only numeric constants are allowed")
             if isinstance(node, ast.Call):
                 if not isinstance(node.func, ast.Name) or node.func.id not in FUNCTIONS:
                     fname = getattr(node.func, "id", "?")
-                    raise FormulaError(f"unbekannte Funktion: {fname}")
+                    raise FormulaError(f"unknown function: {fname}")
                 if node.keywords:
-                    raise FormulaError("Schlüsselwort-Argumente sind nicht erlaubt")
+                    raise FormulaError("keyword arguments are not allowed")
             if isinstance(node, ast.Name):
                 if node.id.startswith("_"):
-                    raise FormulaError(f"Name {node.id!r} nicht erlaubt")
+                    raise FormulaError(f"name {node.id!r} is not allowed")
                 names.append((node.col_offset, node.id))
         names = [n for _, n in sorted(names)]   # order of appearance in the expression
         called = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call)}
@@ -103,11 +103,11 @@ class Formula:
             if n in self.independent or n in CONSTANTS or n in called or n in params:
                 continue
             if n in FUNCTIONS:
-                raise FormulaError(f"{n!r} ist ein Funktionsname und kann kein Parameter sein")
+                raise FormulaError(f"{n!r} is a function name and cannot be a parameter")
             params.append(n)
         missing = [v for v in self.independent if v not in names]
         if missing and len(self.independent) == 1:
-            raise FormulaError(f"der Ausdruck hängt nicht von {missing[0]!r} ab")
+            raise FormulaError(f"the expression does not depend on {missing[0]!r}")
         self.parameters = tuple(params)
         self._code = compile(tree, "<formula>", "eval")
         self._src = src

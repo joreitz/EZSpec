@@ -24,17 +24,17 @@ E_CHARGE = 1.602176634e-19  # C (exact)
 HC_EV_NM = H * C / E_CHARGE * 1e9   # 1239.841984... eV nm
 
 UNITS = {
-    "nm": "Wellenlänge λ / nm",
-    "cm-1": "Wellenzahl ν̃ / cm⁻¹",
-    "eV": "Energie E / eV",
-    "raman": "Raman-Verschiebung Δν̃ / cm⁻¹",
+    "nm": "Wavelength λ / nm",
+    "cm-1": "Wavenumber ν̃ / cm⁻¹",
+    "eV": "Energy E / eV",
+    "raman": "Raman shift Δν̃ / cm⁻¹",
 }
 
 PLAIN_LABELS = {
-    "nm": "Wellenlänge λ (nm)",
-    "cm-1": "Wellenzahl ν̃ (cm⁻¹)",
-    "eV": "Energie E (eV)",
-    "raman": "Raman-Verschiebung (cm⁻¹)",
+    "nm": "Wavelength λ (nm)",
+    "cm-1": "Wavenumber ν̃ (cm⁻¹)",
+    "eV": "Energy E (eV)",
+    "raman": "Raman shift (cm⁻¹)",
 }
 
 AXIS_LABELS = {

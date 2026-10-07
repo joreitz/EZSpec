@@ -54,7 +54,7 @@ class SnapshotCommand(QUndoCommand):
 
 class DatasetCommand(QUndoCommand):
     def __init__(self, state, ds, add: bool, index=None):
-        super().__init__(("Datensatz hinzufügen: " if add else "Datensatz entfernen: ") + ds.name)
+        super().__init__(("Add dataset: " if add else "Remove dataset: ") + ds.name)
         self.state, self.ds, self.add, self.index = state, ds, add, index
 
     def _insert(self):
@@ -81,7 +81,7 @@ class DatasetCommand(QUndoCommand):
 
 class RenameCommand(QUndoCommand):
     def __init__(self, state, ds, name):
-        super().__init__(f"Umbenennen: {ds.name} → {name}")
+        super().__init__(f"Rename: {ds.name} → {name}")
         self.state, self.ds, self.old, self.new = state, ds, ds.name, name
 
     def redo(self):

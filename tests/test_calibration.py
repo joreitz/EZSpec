@@ -98,7 +98,7 @@ def test_per_point_temperature_and_descending_axis():
     lam = v["c0"] + v["cx"] * (x - X0) + v["cT"] * (T - T0)
     np.testing.assert_allclose(out.x, lam, atol=1e-9)
     assert out.meta["calibration"]["per_point"] == ["T"]
-    with pytest.raises(ValueError, match="Wert für 'T' fehlt"):
+    with pytest.raises(ValueError, match="value for 'T' missing"):
         ops.calibrate_x(spectrum(x, x * 0), calibration=cal, fixed="")
     # wavenumber-like calibration with negative slope: output is sorted, acquisition order kept
     neg = spectrum(s.x, 1e7 / s.y, sigma=np.full(s.n, 1e-3), aux={"var:T": s.aux["var:T"]}, x_unit="mA")
@@ -114,7 +114,7 @@ def test_extrapolation_and_hull_warnings():
     x = np.linspace(10, 70, 61)                             # 10 points below I = 20 mA
     out = ops.calibrate_x(spectrum(x, x * 0, x_unit="mA"), calibration=cal, fixed="T=25")
     assert out.meta["calibration"]["n_outside"] == 10
-    assert any("Extrapolation" in w for w in out.meta["_step_warnings"])
+    assert any("extrapolation" in w for w in out.meta["_step_warnings"])
     # parallelogram-shaped calibration region: inside the bounding box but outside the hull
     I = np.concatenate([np.linspace(20, 50, 7) + dT for dT in (0, 6, 12, 18, 24, 30)])
     T = np.repeat(np.linspace(15, 40, 6), 7)
@@ -129,7 +129,7 @@ def test_non_monotonic_mapping_is_refused():
     s = calib_data(quad=1e-3)          # vertex at I = 45 mA inside 20…80
     r = plane_fit(s, "quad_x")
     cal = calibration_from_fit(r, s)
-    with pytest.raises(ValueError, match="nicht monoton"):
+    with pytest.raises(ValueError, match="not monotonic"):
         ops.calibrate_x(spectrum(np.linspace(20, 80, 50), np.zeros(50)), calibration=cal, fixed="T=25")
 
 
@@ -138,8 +138,8 @@ def test_unit_mismatch_and_bad_input():
     cal = calibration_from_fit(plane_fit(s), s)
     out = ops.calibrate_x(spectrum(np.linspace(0.03, 0.07, 10), np.zeros(10), x_unit="A"), calibration=cal,
                           fixed="T=25")
-    assert any("passt nicht zur Kalibrierung" in w for w in out.meta["_step_warnings"])
-    with pytest.raises(ValueError, match="unbekannte Variable"):
+    assert any("does not match the calibration" in w for w in out.meta["_step_warnings"])
+    with pytest.raises(ValueError, match="unknown variable"):
         ops.calibrate_x(spectrum(np.linspace(30, 70, 10), np.zeros(10)), calibration=cal, fixed="p=1")
     with pytest.raises(CalibrationError):
         ops.calibrate_x(spectrum(np.linspace(30, 70, 10), np.zeros(10)), calibration={}, fixed="")

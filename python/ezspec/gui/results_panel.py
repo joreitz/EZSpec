@@ -11,17 +11,19 @@ from ..fit.result import fmt_value
 from .theme import SEVERITY_COLOR, SEVERITY_ICON
 
 TIPS = {
-    "σ-Quelle": "Woher die Unsicherheiten stammen. Nur mit bekanntem/geschätztem σ ist χ² ein χ².",
-    "Kovarianz": "absolut: σ wird als bekannt angenommen. skaliert: Fehler mit √χ²_ν bzw. s skaliert "
-                 "(nötig, wenn σ unbekannt).",
-    "χ²_ν": "Reduziertes χ². Für ein korrektes Modell mit korrektem σ ≈ 1 ± √(2/ν).",
-    "s": "Residuen-Standardabweichung √(RSS/ν) – Schätzung des Rauschens, wenn σ unbekannt.",
-    "AICc": "Informationskriterium (kleiner = besser). Nur Differenzen zwischen Modellen auf identischen "
-            "Daten sind sinnvoll.",
-    "R²": "Deskriptiv. Für nichtlineare Modelle kein geeignetes Vergleichskriterium (Spiess & Neumeyer 2010).",
-    "Runs-Test": "Zu wenige Vorzeichenwechsel der Residuen deuten auf systematische Abweichung hin.",
-    "Kondition": "Verhältnis größter/kleinster Singulärwert der gewichteten Jacobi-Matrix; > 1e12: Parameter "
-                 "kaum bestimmbar.",
+    "σ source": "Where the uncertainties come from. χ² follows a χ² distribution only if σ is known or "
+                "properly estimated.",
+    "Covariance": "absolute: σ is taken as known. scaled: standard errors scaled by √χ²_ν (or s) – "
+                  "required when σ is unknown.",
+    "χ²_ν": "Reduced chi-square χ²/ν. For a correct model with correct σ, expected ≈ 1 ± √(2/ν).",
+    "s": "Residual standard deviation √(RSS/ν) – estimate of the noise when σ is unknown.",
+    "AICc": "Small-sample corrected Akaike information criterion (smaller = better). Only differences between "
+            "models fitted to identical data are meaningful.",
+    "R²": "Descriptive only. Not a suitable criterion for comparing nonlinear models (Spiess & Neumeyer 2010).",
+    "Runs test": "Wald–Wolfowitz runs test on the residual signs: too few sign changes indicate systematic "
+                 "misfit.",
+    "Condition number": "Ratio of the largest to the smallest singular value of the weighted Jacobian; "
+                        "> 1e12: parameters practically not identifiable.",
 }
 
 
@@ -62,7 +64,7 @@ class CorrelationTable(QtWidgets.QTableWidget):
                     f = it.font()
                     f.setBold(True)
                     it.setFont(f)
-                    it.setToolTip("|ρ| > 0,9: Parameter einzeln schlecht bestimmt")
+                    it.setToolTip("|ρ| > 0.9: parameters poorly determined individually")
                 self.setItem(i, j, it)
         self.resizeColumnsToContents()
 
@@ -79,7 +81,7 @@ class ResultsPanel(QtWidgets.QWidget):
         self.state = state
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
-        self.header = QtWidgets.QLabel("Noch kein Fit.")
+        self.header = QtWidgets.QLabel("No fit yet.")
         self.header.setWordWrap(True)
         lay.addWidget(self.header)
         self.tabs = QtWidgets.QTabWidget()
@@ -90,7 +92,7 @@ class ResultsPanel(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         self.stats = QtWidgets.QTableWidget(0, 2)
-        self.stats.setHorizontalHeaderLabels(["Größe", "Wert"])
+        self.stats.setHorizontalHeaderLabels(["Quantity", "Value"])
         self.stats.horizontalHeader().setStretchLastSection(True)
         self.stats.verticalHeader().setVisible(False)
         self.stats.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -98,38 +100,38 @@ class ResultsPanel(QtWidgets.QWidget):
         self.warn = QtWidgets.QListWidget()
         self.warn.setWordWrap(True)
         v.addWidget(self.warn, 2)
-        self.tabs.addTab(w, "Statistik")
+        self.tabs.addTab(w, "Statistics")
 
         self.derived = QtWidgets.QTableWidget(0, 4)
-        self.derived.setHorizontalHeaderLabels(["Komponente", "Größe", "Wert ± SE", "rel."])
+        self.derived.setHorizontalHeaderLabels(["Component", "Quantity", "Value ± SE", "rel."])
         self.derived.horizontalHeader().setStretchLastSection(True)
         self.derived.verticalHeader().setVisible(False)
         self.derived.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.tabs.addTab(self.derived, "Abgeleitet")
+        self.tabs.addTab(self.derived, "Derived")
 
         self.corr = CorrelationTable()
-        self.tabs.addTab(self.corr, "Korrelation")
+        self.tabs.addTab(self.corr, "Correlation")
 
         diag = pg.GraphicsLayoutWidget()
-        self.p_hist = diag.addPlot(row=0, col=0, title="Histogramm normierte Residuen")
-        self.p_qq = diag.addPlot(row=0, col=1, title="Normal-QQ")
-        self.p_acf = diag.addPlot(row=1, col=0, colspan=2, title="Residuen vs. Index")
-        self.tabs.addTab(diag, "Residuen")
+        self.p_hist = diag.addPlot(row=0, col=0, title="Histogram of normalized residuals")
+        self.p_qq = diag.addPlot(row=0, col=1, title="Normal Q–Q plot")
+        self.p_acf = diag.addPlot(row=1, col=0, colspan=2, title="Residuals vs. index")
+        self.tabs.addTab(diag, "Residuals")
 
         self.report = QtWidgets.QPlainTextEdit()
         self.report.setReadOnly(True)
         f = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
         f.setPointSize(9)
         self.report.setFont(f)
-        self.tabs.addTab(self.report, "Bericht")
+        self.tabs.addTab(self.report, "Report")
 
         row = QtWidgets.QHBoxLayout()
-        for text, sig, tip in (("Profil-CI", self.profileRequested, "asymmetrische Konfidenzintervalle über "
-                                                                     "Profil-Likelihood"),
-                               ("Bootstrap…", self.bootstrapRequested, "Residuen- oder Wild-Bootstrap"),
-                               ("Variante merken", self.variantRequested, "Fit für Modellvergleich speichern"),
-                               ("Vergleichen…", self.compareRequested, "ΔAICc / ΔBIC / Akaike-Gewichte"),
-                               ("Exportieren…", self.exportRequested, "Tabellen, Bericht, JSON")):
+        for text, sig, tip in (("Profile CI", self.profileRequested, "Asymmetric confidence intervals from the "
+                                                                      "profile likelihood"),
+                               ("Bootstrap…", self.bootstrapRequested, "Residual or wild bootstrap"),
+                               ("Remember variant", self.variantRequested, "Store this fit for model comparison"),
+                               ("Compare…", self.compareRequested, "ΔAICc / ΔBIC / Akaike weights"),
+                               ("Export…", self.exportRequested, "Tables, report, JSON")):
             b = QtWidgets.QPushButton(text)
             b.setToolTip(tip)
             b.clicked.connect(sig.emit)
@@ -152,34 +154,34 @@ class ResultsPanel(QtWidgets.QWidget):
         for p in (self.p_hist, self.p_qq, self.p_acf):
             p.clear()
         if r is None:
-            self.header.setText("Noch kein Fit. Modell aufbauen und „Fit ausführen“ (Strg+R).")
+            self.header.setText("No fit yet. Build a model and click “Run fit” (Ctrl+R).")
             self.report.setPlainText("")
             return
         current = self.state.fit_current(ds)
-        ok = "✓ konvergiert" if r.success else "✖ nicht konvergiert"
-        stale = "" if current else "  <span style='color:#b36b00'>– veraltet (Daten/Modell/Optionen geändert)</span>"
-        self.header.setText(f"<b>{ok}</b> · {r.method} · {r.nfev} Auswertungen{stale}")
+        ok = "✓ converged" if r.success else "✖ not converged"
+        stale = "" if current else "  <span style='color:#b36b00'>– out of date (data/model/options changed)</span>"
+        self.header.setText(f"<b>{ok}</b> · {r.method} · {r.nfev} function evaluations{stale}")
         st = r.stats
         rows = [("N / p / ν", f"{st.n_points} / {st.n_varys} / {st.dof}"),
-                ("σ-Quelle", st.sigma_label),
-                ("Kovarianz", {"absolute": "absolut", "scaled": "skaliert (√χ²_ν bzw. s)",
-                               "unavailable": "nicht verfügbar"}[st.covariance_mode])]
+                ("σ source", st.sigma_label),
+                ("Covariance", {"absolute": "absolute", "scaled": "scaled (by √χ²_ν or s)",
+                                "unavailable": "not available"}[st.covariance_mode])]
         if st.chi2 is not None:
             lo, hi = st.redchi_band
             rows += [("χ²", _g(st.chi2, ".6g")),
-                     ("χ²_ν", f"{_g(st.redchi, '.4g')}   (1σ-Band {lo:.3g} … {hi:.3g})"),
+                     ("χ²_ν", f"{_g(st.redchi, '.4g')}   (expected 1σ band {lo:.3g} … {hi:.3g})"),
                      ("P(χ² ≥ obs.) ≈", _g(st.chi2_pvalue, ".3g"))]
         else:
-            rows += [("χ²", "nicht definiert (σ unbekannt)")]
+            rows += [("χ²", "undefined (σ unknown)")]
         rows += [("s", _g(st.s_res)), ("RMSE", _g(st.rmse)), ("RSS", _g(st.rss, ".6g")),
                  ("AICc", _g(st.aicc, ".6g")), ("AIC", _g(st.aic, ".6g")), ("BIC", _g(st.bic, ".6g")),
-                 ("IC-Form", st.ic_form),
-                 ("R²", f"{_g(st.r2, '.6f')}  (deskriptiv)"),
-                 ("Runs-Test", f"{st.runs.get('runs')} Runs, erwartet {_g(st.runs.get('expected'), '.1f')}, "
-                               f"p(zu wenige) = {_g(st.runs.get('p_too_few'), '.3g')}"),
-                 ("ρ₁ (Lag 1)", _g(st.lag1_autocorr, ".3f")),
+                 ("IC form", st.ic_form),
+                 ("R²", f"{_g(st.r2, '.6f')}  (descriptive)"),
+                 ("Runs test", f"{st.runs.get('runs')} runs, expected {_g(st.runs.get('expected'), '.1f')}, "
+                               f"p(too few) = {_g(st.runs.get('p_too_few'), '.3g')}"),
+                 ("ρ₁ (lag-1 autocorrelation)", _g(st.lag1_autocorr, ".3f")),
                  ("Durbin–Watson", _g(st.durbin_watson, ".3f")),
-                 ("Kondition", _g(st.jacobian_condition, ".3g"))]
+                 ("Condition number", _g(st.jacobian_condition, ".3g"))]
         self.stats.setRowCount(len(rows))
         for i, (k, val) in enumerate(rows):
             a = QtWidgets.QTableWidgetItem(k)
@@ -193,7 +195,7 @@ class ResultsPanel(QtWidgets.QWidget):
             self.stats.setItem(i, 1, b)
         self.stats.resizeColumnToContents(0)
         if not r.warnings:
-            self.warn.addItem("✓ keine Auffälligkeiten")
+            self.warn.addItem("✓ no issues found")
         for w in sorted(r.warnings, key=lambda w: {"error": 0, "warning": 1, "info": 2}[w.severity]):
             it = QtWidgets.QListWidgetItem(f"{SEVERITY_ICON[w.severity]} {w.message}")
             it.setForeground(QtGui.QColor(SEVERITY_COLOR[w.severity]))
@@ -219,8 +221,8 @@ class ResultsPanel(QtWidgets.QWidget):
             self.p_qq.plot(qx, qy, pen=None, symbol="o", symbolSize=3, symbolBrush="#3c3c3c", symbolPen=None)
             lim = [qx.min(), qx.max()]
             self.p_qq.plot(lim, lim, pen=pg.mkPen("#bd1f01"))
-            self.p_qq.setLabel("bottom", "theoretisch")
-            self.p_qq.setLabel("left", "beobachtet")
+            self.p_qq.setLabel("bottom", "theoretical quantiles")
+            self.p_qq.setLabel("left", "observed quantiles")
             self.p_acf.plot(np.arange(len(z)), z, pen=pg.mkPen("#3c3c3c", width=1))
             self.p_acf.addLine(y=0, pen=pg.mkPen("#808080"))
         self.report.setPlainText(r.report())

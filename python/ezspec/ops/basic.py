@@ -22,7 +22,7 @@ Y_DIFFERENCE_AUX = ("baseline", "baseline_total")    # y differences (subtracted
 
 
 # =========================================================================== range
-@operation("crop", 1, "Bereich beschneiden", "Bereich",
+@operation("crop", 1, "Crop range", "Range",
            params=[P("xmin", "float", None, "x min", optional=True),
                    P("xmax", "float", None, "x max", optional=True)])
 def crop(s: Spectrum, xmin, xmax) -> Spectrum:
@@ -45,9 +45,9 @@ def _in_ranges(x, ranges):
     return m
 
 
-@operation("exclude", 1, "Bereiche vom Fit ausschließen", "Bereich",
-           params=[P("ranges", "ranges", [], "Bereiche [(a, b), ...]"),
-                   P("replace", "bool", False, "vorhandene Maske ersetzen")])
+@operation("exclude", 1, "Exclude ranges from fit", "Range",
+           params=[P("ranges", "ranges", [], "Ranges [(a, b), ...]"),
+                   P("replace", "bool", False, "Replace existing mask")])
 def exclude(s: Spectrum, ranges, replace) -> Spectrum:
     """Mark x-ranges as excluded from fitting (data stay visible)."""
     m = _in_ranges(s.x, ranges)
@@ -57,9 +57,9 @@ def exclude(s: Spectrum, ranges, replace) -> Spectrum:
 
 
 # =========================================================================== scaling
-@operation("offset_scale", 1, "Offset / Skalierung", "Skalierung",
-           params=[P("offset", "float", 0.0, "Offset (abgezogen)"),
-                   P("factor", "float", 1.0, "Faktor")])
+@operation("offset_scale", 1, "Offset / scale", "Scaling",
+           params=[P("offset", "float", 0.0, "Offset (subtracted)"),
+                   P("factor", "float", 1.0, "Factor")])
 def offset_scale(s: Spectrum, offset, factor) -> Spectrum:
     """y' = (y - offset) * factor; sigma' = sigma * |factor|."""
     if factor == 0:
@@ -75,10 +75,10 @@ def offset_scale(s: Spectrum, offset, factor) -> Spectrum:
     return s.replace(y=(s.y - offset) * factor, sigma=sig, aux=aux)
 
 
-@operation("normalize", 1, "Normieren", "Skalierung",
-           params=[P("method", "choice", "max", "Methode",
+@operation("normalize", 1, "Normalize", "Scaling",
+           params=[P("method", "choice", "max", "Method",
                      choices=("max", "area", "vector", "snv", "minmax", "value_at")),
-                   P("x_ref", "float", None, "x-Referenz (value_at)", optional=True)],
+                   P("x_ref", "float", None, "Reference x (value_at)", optional=True)],
            flags=("normalized",))
 def normalize(s: Spectrum, method, x_ref) -> Spectrum:
     """Normalisation. Absolute amplitudes/areas of later fits refer to the
@@ -102,28 +102,28 @@ def normalize(s: Spectrum, method, x_ref) -> Spectrum:
         raise ValueError("normalisation constant is zero or not finite")
     out = offset_scale.spec.func(s, offset=off, factor=f)
     meta = dict(out.meta)
-    meta["normalization"] = {"method": method, "offset": float(off), "factor": float(f)}
+    meta["normalization"] = {"Method": method, "offset": float(off), "factor": float(f)}
     return out.replace(meta=meta)
 
 
 # =========================================================================== units
-@operation("set_units", 1, "Einheiten / Achsentitel festlegen", "Einheiten",
-           params=[P("x_unit", "choice", "", "x-Einheit", choices=("",) + tuple(units.UNITS)),
-                   P("x_label", "str", "", "x-Achsentitel (leer = automatisch)"),
-                   P("y_unit", "str", "", "y-Einheit"),
-                   P("y_label", "str", "", "y-Achsentitel")])
+@operation("set_units", 1, "Set units / axis titles", "Units",
+           params=[P("x_unit", "choice", "", "x unit", choices=("",) + tuple(units.UNITS)),
+                   P("x_label", "str", "", "x-axis title (empty = automatic)"),
+                   P("y_unit", "str", "", "y unit"),
+                   P("y_label", "str", "", "y-axis title")])
 def set_units(s: Spectrum, x_unit, x_label, y_unit, y_label) -> Spectrum:
     """Declare units and axis labels (metadata only; data are unchanged)."""
     xl = x_label or units.AXIS_LABELS.get(x_unit, s.x_label)
     return s.replace(x_unit=x_unit, x_label=xl, y_unit=y_unit or s.y_unit, y_label=y_label or s.y_label)
 
 
-@operation("convert_x", 1, "x-Einheit umrechnen", "Einheiten",
-           params=[P("to", "choice", "eV", "Ziel-Einheit", choices=tuple(units.UNITS)),
-                   P("from_unit", "choice", None, "Quell-Einheit (leer = aus Daten)",
+@operation("convert_x", 1, "Convert x unit", "Units",
+           params=[P("to", "choice", "eV", "Target unit", choices=tuple(units.UNITS)),
+                   P("from_unit", "choice", None, "Source unit (empty = from data)",
                      choices=tuple(units.UNITS), optional=True),
-                   P("laser_nm", "float", None, "Anregungswellenlänge / nm (Raman)", optional=True, min=0.0),
-                   P("spectral_density", "bool", False, "y ist spektrale Dichte (Jacobi-Faktor)")],
+                   P("laser_nm", "float", None, "Excitation wavelength / nm (Raman)", optional=True, min=0.0),
+                   P("spectral_density", "bool", False, "y is a spectral density (Jacobian factor)")],
            flags=())
 def convert_x(s: Spectrum, to, from_unit, laser_nm, spectral_density) -> Spectrum:
     """Convert the x axis. For spectral densities y and sigma are multiplied
@@ -180,10 +180,10 @@ def _hat_operator(x, x_new, mode, edges=None):
     return sparse.csr_matrix((vals, (rows, cols)), shape=(len(x_new), n))
 
 
-@operation("resample", 1, "Neu abtasten", "Einheiten",
-           params=[P("step", "float", None, "Schrittweite", optional=True, min=0.0),
-                   P("n", "int", None, "Anzahl Punkte", optional=True, min=2),
-                   P("method", "choice", "linear", "Methode", choices=("linear", "bin_mean"))],
+@operation("resample", 1, "Resample", "Units",
+           params=[P("step", "float", None, "Step size", optional=True, min=0.0),
+                   P("n", "int", None, "Number of points", optional=True, min=2),
+                   P("method", "choice", "linear", "Method", choices=("linear", "bin_mean"))],
            flags=("interpolated",))
 def resample(s: Spectrum, step, n, method) -> Spectrum:
     """Resample onto a uniform grid. ``linear`` evaluates the linear
@@ -227,9 +227,9 @@ def whitaker_hayes_spikes(y, threshold):
     return spikes
 
 
-@operation("despike", 1, "Spikes entfernen (Whitaker–Hayes)", "Korrektur",
-           params=[P("threshold", "float", 8.0, "Schwelle (modif. z-Score)", min=0.0),
-                   P("kernel", "int", 3, "Fenster ± Punkte", min=1)],
+@operation("despike", 1, "Remove spikes (Whitaker–Hayes)", "Correction",
+           params=[P("threshold", "float", 8.0, "Threshold (modified z-score)", min=0.0),
+                   P("kernel", "int", 3, "Window ± points", min=1)],
            flags=("despiked",))
 def despike(s: Spectrum, threshold, kernel) -> Spectrum:
     """Cosmic-ray removal: points whose first difference has a modified
@@ -247,13 +247,13 @@ def despike(s: Spectrum, threshold, kernel) -> Spectrum:
     meta["despike_replaced"] = int(spikes.sum())
     out = out.replace(meta=meta)
     if spikes.sum() > 0.05 * s.n:
-        out = warn(out, f"Despike ersetzte {spikes.sum()} Punkte (>5 %) – Schwelle zu niedrig?")
+        out = warn(out, f"Despike replaced {spikes.sum()} points (>5 %) – threshold too low?")
     return out
 
 
 # =========================================================================== smoothing
-_SMOOTH_NOTE = ("Glätten senkt Peakhöhen, verbreitert Peaks und korreliert das Rauschen; "
-                "Fits auf geglätteten Daten unterschätzen Unsicherheiten stark (O'Haver).")
+_SMOOTH_NOTE = ("Smoothing lowers peak heights, broadens peaks and correlates the noise; "
+                "fits to smoothed data severely underestimate uncertainties (O'Haver).")
 
 
 def _smoothed(s: Spectrum, ys: np.ndarray, target: str) -> Spectrum:
@@ -264,24 +264,24 @@ def _smoothed(s: Spectrum, ys: np.ndarray, target: str) -> Spectrum:
     return s.replace(y=ys).with_flags("smoothed")
 
 
-_TARGET = P("target", "choice", "display", "anwenden auf", choices=("display", "data"),
-            help="display: nur Anzeige/Peaksuche (empfohlen); data: ersetzt y")
+_TARGET = P("target", "choice", "display", "Apply to", choices=("display", "data"),
+            help="display: display/peak search only (recommended); data: replaces y")
 
 
-@operation("smooth_moving_average", 1, "Gleitender Mittelwert", "Glätten",
-           params=[P("half_window", "int", 2, "Halbfenster (Punkte)", min=1),
-                   P("edges", "choice", "shrink", "Ränder", choices=("shrink", "reflect", "nearest")),
+@operation("smooth_moving_average", 1, "Moving average", "Smoothing",
+           params=[P("half_window", "int", 2, "Half-window (points)", min=1),
+                   P("edges", "choice", "shrink", "Edges", choices=("shrink", "reflect", "nearest")),
                    _TARGET],
-           description="Zentrierter gleitender Mittelwert. " + _SMOOTH_NOTE)
+           description="Centred moving average. " + _SMOOTH_NOTE)
 def smooth_moving_average(s: Spectrum, half_window, edges, target) -> Spectrum:
     return _smoothed(s, core().moving_average(as_f64(s.y), half_window, edges), target)
 
 
-@operation("smooth_savgol", 1, "Savitzky–Golay", "Glätten",
-           params=[P("window", "int", 11, "Fensterlänge (ungerade)", min=3),
-                   P("polyorder", "int", 3, "Polynomgrad", min=0),
+@operation("smooth_savgol", 1, "Savitzky–Golay", "Smoothing",
+           params=[P("window", "int", 11, "Window length (odd)", min=3),
+                   P("polyorder", "int", 3, "Polynomial order", min=0),
                    _TARGET],
-           description="Savitzky–Golay-Filter (scipy, Randmodus 'interp'). " + _SMOOTH_NOTE)
+           description="Savitzky–Golay filter (scipy, edge mode 'interp'). " + _SMOOTH_NOTE)
 def smooth_savgol(s: Spectrum, window, polyorder, target) -> Spectrum:
     if window % 2 == 0:
         window += 1
@@ -290,11 +290,11 @@ def smooth_savgol(s: Spectrum, window, polyorder, target) -> Spectrum:
     return _smoothed(s, savgol_filter(s.y, window, polyorder, mode="interp"), target)
 
 
-@operation("smooth_whittaker", 1, "Whittaker-Glättung", "Glätten",
+@operation("smooth_whittaker", 1, "Whittaker smoothing", "Smoothing",
            params=[P("lam", "log_float", 1e2, "λ", min=0.0),
-                   P("diff_order", "int", 2, "Differenzenordnung", min=1, max=3),
+                   P("diff_order", "int", 2, "Difference order", min=1, max=3),
                    _TARGET],
-           description="Whittaker-Glätter (gute Nebenkeulendämpfung). " + _SMOOTH_NOTE)
+           description="Whittaker smoother (good sidelobe suppression). " + _SMOOTH_NOTE)
 def smooth_whittaker(s: Spectrum, lam, diff_order, target) -> Spectrum:
     ys = core().whittaker_smooth(as_f64(s.y), np.ones(s.n), lam, diff_order)
     return _smoothed(s, ys, target)
@@ -310,9 +310,9 @@ def detrended_std(x, y):
     return float(np.sqrt(np.sum(r * r) / (len(x) - 2)))
 
 
-@operation("estimate_noise", 1, "Rauschen schätzen → σ", "Unsicherheit",
-           params=[P("method", "choice", "der_snr", "Methode", choices=("der_snr", "region")),
-                   P("region", "range", [None, None], "flacher Bereich (region)")])
+@operation("estimate_noise", 1, "Estimate noise → σ", "Uncertainty",
+           params=[P("method", "choice", "der_snr", "Method", choices=("der_snr", "region")),
+                   P("region", "range", [None, None], "Flat region (region)")])
 def estimate_noise(s: Spectrum, method, region) -> Spectrum:
     """Set a constant sigma estimated from the data. ``der_snr``:
     0.6052697 * median|2y_i - y_{i-2} - y_{i+2}| (assumes white noise and a
@@ -333,13 +333,13 @@ def estimate_noise(s: Spectrum, method, region) -> Spectrum:
     if not (np.isfinite(sig) and sig > 0):
         raise ValueError("noise estimate is zero or undefined")
     meta = dict(s.meta)
-    meta["noise_estimate"] = {"method": method, "sigma": float(sig)}
+    meta["noise_estimate"] = {"Method": method, "sigma": float(sig)}
     return s.replace(sigma=np.full(s.n, sig), sigma_source=src, meta=meta)
 
 
-@operation("set_sigma", 1, "σ festlegen", "Unsicherheit",
-           params=[P("mode", "choice", "constant", "Modus", choices=("constant", "poisson_data", "none")),
-                   P("value", "float", 1.0, "Wert (constant)", min=0.0)])
+@operation("set_sigma", 1, "Set σ", "Uncertainty",
+           params=[P("mode", "choice", "constant", "Mode", choices=("constant", "poisson_data", "none")),
+                   P("value", "float", 1.0, "Value (constant)", min=0.0)])
 def set_sigma(s: Spectrum, mode, value) -> Spectrum:
     """Set sigma explicitly. ``poisson_data`` (sigma = sqrt(max(y, 1))) is the
     Neyman approximation; it biases amplitudes and areas downwards even at
@@ -352,4 +352,4 @@ def set_sigma(s: Spectrum, mode, value) -> Spectrum:
             raise ValueError("value must be > 0")
         return s.replace(sigma=np.full(s.n, value), sigma_source=SigmaSource.CONSTANT)
     out = s.replace(sigma=np.sqrt(np.maximum(s.y, 1.0)), sigma_source=SigmaSource.POISSON_DATA)
-    return warn(out, "σ = √y ist verzerrt (Humphrey et al. 2009); besser Fit-Gewichtung 'Poisson (σ² = Modell)'.")
+    return warn(out, "σ = √y is biased (Humphrey et al. 2009); prefer the fit weighting 'Poisson: σ² = model'.")

@@ -61,11 +61,11 @@ def test_select_sweeps_keeps_directions_apart():
     up = select_sweeps(s, direction="up", sweep=-1)
     assert up.n == np.sum(d == 1)
     np.testing.assert_array_equal(np.sort(up.y), np.sort(y[d == 1]))
-    assert any("Durchläufe ausgewählt" in w for w in up.meta["_step_warnings"])
+    assert any("sweeps selected" in w for w in up.meta["_step_warnings"])
     second_down = select_sweeps(s, direction="down", sweep=1)
     assert second_down.n == 150 and not is_multivalued(second_down)
     np.testing.assert_array_equal(np.sort(second_down.y), np.sort(y[3 * 150:4 * 150]))
-    with pytest.raises(ValueError, match="kein passender"):
+    with pytest.raises(ValueError, match="no matching"):
         select_sweeps(s, direction="down", sweep=7)
 
 
@@ -78,7 +78,7 @@ def test_average_sweeps_identical_grid_standard_error():
     np.testing.assert_allclose(out.sigma, Y.std(axis=0, ddof=1) / 2.0)
     assert out.sigma_source is SigmaSource.REPEATS and out.sigma_source.is_known
     assert "interpolated" not in out.flags and "acq_index" not in out.aux
-    assert any("Wiederholungen" in w for w in out.meta["_step_warnings"])    # n = 4 < 5
+    assert any("repeats" in w for w in out.meta["_step_warnings"])    # n = 4 < 5
 
 
 def test_average_sweeps_interpolates_noisy_grids():
@@ -115,10 +115,10 @@ def test_pipeline_warns_before_smoothing_mixed_ramps():
     p = Pipeline()
     sm = p.add("smooth_moving_average", {"half_window": 2})
     run = p.run(s)
-    assert any("mehrere Durchläufe" in w for w in run.result(sm.id).warnings)
+    assert any("multiple sweeps" in w for w in run.result(sm.id).warnings)
     q = Pipeline()
     q.add("select_sweeps", {"direction": "up", "sweep": 0})
     sm2 = q.add("smooth_moving_average", {"half_window": 2})
     run2 = q.run(s)
-    assert not any("mehrere Durchläufe" in w for w in run2.result(sm2.id).warnings)
+    assert not any("multiple sweeps" in w for w in run2.result(sm2.id).warnings)
     assert run2.final.n == 150

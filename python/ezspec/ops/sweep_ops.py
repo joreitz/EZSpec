@@ -10,9 +10,9 @@ from .registry import ParamSpec as P
 from .registry import operation, warn
 
 _DIR = {"up": 1, "down": -1}
-_COMMON = [P("tolerance", "float", 0.01, "Umkehr-Schwelle (Anteil des x-Bereichs)", min=0.0, max=0.5,
-             help="Richtungswechsel erst, wenn x um mehr als diesen Anteil zurückläuft (robust gegen Rauschen)"),
-           P("min_points", "int", 5, "min. Punkte pro Durchlauf", min=2)]
+_COMMON = [P("tolerance", "float", 0.01, "Reversal threshold (fraction of x range)", min=0.0, max=0.5,
+             help="A change of direction is only registered once x runs back by more than this fraction (robust against noise)"),
+           P("min_points", "int", 5, "Min. points per sweep", min=2)]
 
 
 def _describe(sw):
@@ -33,9 +33,9 @@ def _merge_duplicates(x, y, e):
     return ux, ym, em
 
 
-@operation("select_sweeps", 1, "Durchläufe auswählen (hin/zurück)", "Bereich",
-           params=[P("direction", "choice", "up", "Richtung", choices=("up", "down", "all")),
-                   P("sweep", "int", -1, "Nr. (0, 1, …; −1 = alle dieser Richtung)", min=-1)] + _COMMON)
+@operation("select_sweeps", 1, "Select sweeps (up/down)", "Range",
+           params=[P("direction", "choice", "up", "Direction", choices=("up", "down", "all")),
+                   P("sweep", "int", -1, "No. (0, 1, …; −1 = all in this direction)", min=-1)] + _COMMON)
 def select_sweeps(s: Spectrum, direction, sweep, tolerance, min_points) -> Spectrum:
     """Keep only the ramps of one direction (or a single ramp). Up and down
     ramps are not mixed: their x scales can differ (hysteresis)."""
@@ -50,8 +50,8 @@ def select_sweeps(s: Spectrum, direction, sweep, tolerance, min_points) -> Spect
         if sweep >= 0:
             chosen = [w for w in chosen if w.number == sweep]
     if not chosen:
-        raise ValueError(f"kein passender Durchlauf gefunden (gefunden: {info['up']} steigend, "
-                         f"{info['down']} fallend, {info['flat']} flach)")
+        raise ValueError(f"no matching sweep found (found: {info['up']} up, "
+                         f"{info['down']} down, {info['flat']} flat)")
     idx = np.sort(np.concatenate([w.indices for w in chosen]))
     out = s.take(idx)
     meta = dict(out.meta)
@@ -59,18 +59,18 @@ def select_sweeps(s: Spectrum, direction, sweep, tolerance, min_points) -> Spect
     out = out.replace(meta=meta)
     dirs = {w.direction for w in chosen}
     if len(chosen) > 1:
-        out = warn(out, f"{len(chosen)} Durchläufe ausgewählt – x bleibt mehrdeutig; einzeln wählen oder "
-                        "'Durchläufe mitteln'.")
+        out = warn(out, f"{len(chosen)} sweeps selected – x remains ambiguous; select a single sweep or use "
+                        "'Average sweeps'.")
     if dirs == {1, -1}:
-        out = warn(out, "steigende und fallende Rampen gemischt – bei Hysterese unterscheiden sich die x-Skalen.")
+        out = warn(out, "Up and down ramps mixed – with hysteresis their x scales differ.")
     return out
 
 
-@operation("average_sweeps", 1, "Durchläufe mitteln (gleiche Richtung)", "Bereich",
-           params=[P("direction", "choice", "up", "Richtung", choices=("up", "down")),
-                   P("sigma", "choice", "repeats", "σ des Mittels",
+@operation("average_sweeps", 1, "Average sweeps (same direction)", "Range",
+           params=[P("direction", "choice", "up", "Direction", choices=("up", "down")),
+                   P("sigma", "choice", "repeats", "σ of the mean",
                      choices=("repeats", "propagate", "none"),
-                     help="repeats: Streuung der Durchläufe / √n; propagate: aus vorhandenem σ")] + _COMMON)
+                     help="repeats: scatter of the sweeps / √n; propagate: from the existing σ")] + _COMMON)
 def average_sweeps(s: Spectrum, direction, sigma, tolerance, min_points) -> Spectrum:
     """Average all ramps of one direction point by point. Identical x grids are
     averaged directly, otherwise the ramps are interpolated onto the grid of the
@@ -78,8 +78,8 @@ def average_sweeps(s: Spectrum, direction, sigma, tolerance, min_points) -> Spec
     is the standard error of the mean of the repetitions."""
     sw = [w for w in find_sweeps(s, tolerance, min_points) if w.direction == _DIR[direction]]
     if len(sw) < 2:
-        raise ValueError(f"mindestens zwei {'steigende' if direction == 'up' else 'fallende'} Durchläufe nötig, "
-                         f"gefunden: {len(sw)}")
+        raise ValueError(f"at least two {'up' if direction == 'up' else 'down'} sweeps required, "
+                         f"found: {len(sw)}")
     segs = []
     for w in sw:
         o = np.argsort(s.x[w.indices], kind="stable")
@@ -98,7 +98,7 @@ def average_sweeps(s: Spectrum, direction, sigma, tolerance, min_points) -> Spec
         hi = min(x.max() for x, _, _ in segs)
         X = x0[(x0 >= lo) & (x0 <= hi)]
         if len(X) < 2:
-            raise ValueError("die Durchläufe überlappen in x nicht")
+            raise ValueError("the sweeps do not overlap in x")
         segs = [_merge_duplicates(*seg) for seg in segs]
         Y = np.vstack([np.interp(X, x, y) for x, y, _ in segs])
         S = None if s.sigma is None else np.vstack([np.interp(X, x, e) for x, _, e in segs])
@@ -112,18 +112,18 @@ def average_sweeps(s: Spectrum, direction, sigma, tolerance, min_points) -> Spec
         if np.all(sd > 0):
             out_sigma, src = sd / np.sqrt(n), SigmaSource.REPEATS
         else:
-            msgs.append("Streuung der Durchläufe ist an manchen Punkten 0 – kein σ")
+            msgs.append("Scatter of the sweeps is 0 at some points – no σ")
         if n < 5:
-            msgs.append(f"σ aus nur {n} Wiederholungen geschätzt: relative Unsicherheit von σ ≈ "
+            msgs.append(f"σ estimated from only {n} repeats: relative uncertainty of σ ≈ "
                         f"{100 / np.sqrt(2 * (n - 1)):.0f} %")
     elif sigma == "propagate" and S is not None:
         out_sigma, src = np.sqrt((S ** 2).sum(axis=0)) / n, s.sigma_source
     meta = dict(s.meta)
-    meta["sweeps"] = {"averaged": n, "direction": direction, "grid": "interpoliert" if interpolated else "identisch"}
+    meta["sweeps"] = {"averaged": n, "direction": direction, "grid": "interpolated" if interpolated else "identical"}
     out = Spectrum(X, mean, out_sigma, src, s.x_unit, s.y_unit, s.x_label, s.y_label, None, meta,
                    s.flags | ({"interpolated"} if interpolated else set()), {})
     for m in msgs:
         out = warn(out, m)
     if interpolated:
-        out = warn(out, "Durchläufe auf das Raster des ersten interpoliert (korreliert benachbarte Punkte).")
+        out = warn(out, "Sweeps interpolated onto the grid of the first sweep (correlates neighbouring points).")
     return out

@@ -28,7 +28,7 @@ from .spectrum import Spectrum
 
 
 # operations that combine points that are neighbours in x
-_NEIGHBOUR_CATEGORIES = ("Glätten", "Baseline", "Korrektur")
+_NEIGHBOUR_CATEGORIES = ("Smoothing", "Baseline", "Correction")
 
 
 def _now() -> str:
@@ -195,7 +195,7 @@ class Pipeline:
         failed = False
         for step in self.steps:
             if failed:
-                results.append(StepResult(step, None, None, error="vorheriger Schritt fehlgeschlagen"))
+                results.append(StepResult(step, None, None, error="previous step failed"))
             elif not step.enabled:
                 results.append(StepResult(step, current, current))
             else:
@@ -213,11 +213,11 @@ class Pipeline:
         spec = get_op(step.op)
         warnings = []
         if step.op_version > spec.version:
-            return StepResult(step, s, None, error=f"Operation {step.op} v{step.op_version} ist neuer "
-                                                   f"als diese Programmversion (v{spec.version})")
+            return StepResult(step, s, None, error=f"operation {step.op} v{step.op_version} is newer "
+                                                   f"than this program version (v{spec.version})")
         if step.op_version < spec.version:
-            warnings.append(f"{step.op} wurde mit Version {step.op_version} erstellt, "
-                            f"ausgeführt wird Version {spec.version}")
+            warnings.append(f"{step.op} was created with version {step.op_version}, "
+                            f"running version {spec.version}")
         key = hashlib.sha256((_spectrum_key(s) + step.op + str(spec.version)
                               + json.dumps(step.params, sort_keys=True)).encode()).hexdigest()
         if key in self._cache:
@@ -237,8 +237,8 @@ class Pipeline:
         if spec.category in _NEIGHBOUR_CATEGORIES or step.op == "resample":
             from .sweeps import is_multivalued
             if is_multivalued(s):
-                w.append("Daten enthalten mehrere Durchläufe (hin/zurück): dieser Schritt verknüpft Nachbarpunkte "
-                         "in x und mischt dabei die Rampen – vorher 'Durchläufe auswählen' oder 'mitteln'.")
+                w.append("Data contain multiple sweeps (up/down): this step combines neighbouring points "
+                         "in x and thereby mixes the ramps – apply 'Select sweeps' or 'Average sweeps' first.")
         self._cache[key] = (out, w)
         if len(self._cache) > self.CACHE_SIZE:
             self._cache.popitem(last=False)
@@ -257,7 +257,7 @@ class Pipeline:
     def script_lines(self, var: str = "s") -> list:
         lines = []
         for st in self.steps:
-            prefix = "" if st.enabled else "# (deaktiviert) "
+            prefix = "" if st.enabled else "# (disabled) "
             lines.append(prefix + st.call().code(var))
         return lines
 

@@ -64,7 +64,7 @@ def test_project_roundtrip(raw_file, tmp_path):
 def test_figure_rendering_is_deterministic(raw_file, tmp_path):
     ds = build_dataset(raw_file)
     curves = curves_for(ds.processed, ds.raw, ds.fit_result)
-    spec = default_spec(ds.id, curves, r"$\lambda$ (nm)", "Intensität", preset="acs_1")
+    spec = default_spec(ds.id, curves, r"$\lambda$ (nm)", "Intensity", preset="acs_1")
     spec["panels"][0]["param_box"] = {"lines": param_box_lines(ds.fit_result, ["p1_center", "p1.height"])}
     spec["panels"][0]["secondary_x"] = {"from": "nm", "to": "eV"}
     set_path(spec, "panels.0.legend", "upper left")

@@ -23,18 +23,18 @@ MM = 1.0 / 25.4
 # Column widths as published in author guidelines (no guarantee – check the
 # current guide of the journal before submission).
 PRESETS = {
-    "elsevier_1": {"title": "Elsevier – 1 Spalte (90 mm)", "width_mm": 90, "height_mm": 68, "font_size": 8},
-    "elsevier_15": {"title": "Elsevier – 1,5 Spalten (140 mm)", "width_mm": 140, "height_mm": 95, "font_size": 8},
-    "elsevier_2": {"title": "Elsevier – 2 Spalten (190 mm)", "width_mm": 190, "height_mm": 110, "font_size": 8},
-    "acs_1": {"title": "ACS – 1 Spalte (3,25 in)", "width_mm": 82.55, "height_mm": 62, "font_size": 8},
-    "acs_2": {"title": "ACS – 2 Spalten (7 in)", "width_mm": 177.8, "height_mm": 100, "font_size": 8},
-    "aps_1": {"title": "APS/AIP – 1 Spalte (8,6 cm)", "width_mm": 86, "height_mm": 65, "font_size": 8},
-    "aps_2": {"title": "APS/AIP – 2 Spalten (17,8 cm)", "width_mm": 178, "height_mm": 100, "font_size": 8},
-    "nature_1": {"title": "Nature – 1 Spalte (89 mm)", "width_mm": 89, "height_mm": 67, "font_size": 7},
-    "nature_2": {"title": "Nature – 2 Spalten (183 mm)", "width_mm": 183, "height_mm": 100, "font_size": 7},
-    "presentation": {"title": "Präsentation 16:9", "width_mm": 254, "height_mm": 142.9, "font_size": 16},
+    "elsevier_1": {"title": "Elsevier – 1 column (90 mm)", "width_mm": 90, "height_mm": 68, "font_size": 8},
+    "elsevier_15": {"title": "Elsevier – 1.5 columns (140 mm)", "width_mm": 140, "height_mm": 95, "font_size": 8},
+    "elsevier_2": {"title": "Elsevier – 2 columns (190 mm)", "width_mm": 190, "height_mm": 110, "font_size": 8},
+    "acs_1": {"title": "ACS – 1 column (3.25 in)", "width_mm": 82.55, "height_mm": 62, "font_size": 8},
+    "acs_2": {"title": "ACS – 2 columns (7 in)", "width_mm": 177.8, "height_mm": 100, "font_size": 8},
+    "aps_1": {"title": "APS/AIP – 1 column (8.6 cm)", "width_mm": 86, "height_mm": 65, "font_size": 8},
+    "aps_2": {"title": "APS/AIP – 2 columns (17.8 cm)", "width_mm": 178, "height_mm": 100, "font_size": 8},
+    "nature_1": {"title": "Nature – 1 column (89 mm)", "width_mm": 89, "height_mm": 67, "font_size": 7},
+    "nature_2": {"title": "Nature – 2 columns (183 mm)", "width_mm": 183, "height_mm": 100, "font_size": 7},
+    "presentation": {"title": "Presentation 16:9", "width_mm": 254, "height_mm": 142.9, "font_size": 16},
 }
-PRESET_NOTE = "Maße laut Autorenrichtlinien (ohne Gewähr) – vor Einreichung die aktuelle Vorgabe prüfen."
+PRESET_NOTE = "Dimensions as given in the author guidelines (without guarantee) – check the current requirements before submission."
 
 _FALLBACK_CYCLE = ["#3f90da", "#ffa90e", "#bd1f01", "#94a4a2", "#832db6", "#a96b59", "#e76300",
                    "#b9ac70", "#717581", "#92dadd"]
@@ -159,7 +159,7 @@ def make_resolver(curves: dict) -> Callable:
         try:
             return curves[source][curve]
         except KeyError:
-            raise KeyError(f"Kurve {curve!r} von {source!r} nicht verfügbar") from None
+            raise KeyError(f"curve {curve!r} of {source!r} not available") from None
     return resolve
 
 
@@ -272,7 +272,7 @@ def _draw_panel(ax, panel, resolve, cycle):
         elif kind == "step":
             ax.step(x, y, where="mid", lw=lw, **kw)
         else:
-            raise ValueError(f"unbekannte Spurart {kind!r}")
+            raise ValueError(f"unknown trace kind {kind!r}")
     if panel.get("zero_line"):
         ax.axhline(0.0, color="0.4", lw=0.5, zorder=0)
     ax.set_xlabel(panel.get("xlabel", ""))

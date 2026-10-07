@@ -31,7 +31,7 @@ def baseline_systematics(raw, pipeline: Pipeline, model, options=None, step_id: 
     if step_id is not None:
         steps = [s for s in steps if s.id == step_id]
     if not steps:
-        raise ValueError("keine variierbare Baseline (AsLS, arPLS, SNIP, Polynom) in der Pipeline")
+        raise ValueError("no variable baseline step (AsLS, arPLS, SNIP, polynomial) in the pipeline")
     step = steps[-1]
     pname, mode, values = VARIATIONS[step.op]
     if variations is not None:
@@ -55,7 +55,7 @@ def baseline_systematics(raw, pipeline: Pipeline, model, options=None, step_id: 
             continue
         variants.append((new, r))
     if len(variants) < 2:
-        raise ValueError("zu wenige erfolgreiche Varianten")
+        raise ValueError("too few successful variants")
     names = list(variants[0][1].params)
     dnames = [f"{d.component}.{d.name}" for d in variants[0][1].derived]
     table = {}
@@ -69,8 +69,8 @@ def baseline_systematics(raw, pipeline: Pipeline, model, options=None, step_id: 
                 vals.append(r.derived_table().get(comp, {}).get(key, (np.nan, None))[0])
         vals = np.array(vals, float)
         table[n] = {"values": vals.tolist(), "systematic": float(0.5 * (np.nanmax(vals) - np.nanmin(vals)))}
-    summary = [f"Baseline-Systematik: {step.title}, {pname} ∈ {[v for v, _ in variants]} "
-               f"(nominal {nominal}); systematischer Fehler = halbe Spannweite"]
+    summary = [f"Baseline systematics: {step.title}, {pname} ∈ {[v for v, _ in variants]} "
+               f"(nominal {nominal}); systematic error = half the range"]
     nominal_r = next((r for v, r in variants if v == nominal), variants[len(variants) // 2][1])
     for n in names + dnames:
         stat = None
@@ -81,8 +81,8 @@ def baseline_systematics(raw, pipeline: Pipeline, model, options=None, step_id: 
             stat = nominal_r.derived_table().get(comp, {}).get(key, (None, None))[1]
         syst = table[n]["systematic"]
         if stat:
-            summary.append(f"{n}: ± {stat:.3g} (stat.) ± {syst:.3g} (syst., Baseline)")
+            summary.append(f"{n}: ± {stat:.3g} (stat.) ± {syst:.3g} (syst., baseline)")
         else:
-            summary.append(f"{n}: ± {syst:.3g} (syst., Baseline)")
+            summary.append(f"{n}: ± {syst:.3g} (syst., baseline)")
     return {"step": step.id, "parameter": pname, "variants": [v for v, _ in variants], "table": table,
             "summary": summary}
