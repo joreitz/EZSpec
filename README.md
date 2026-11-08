@@ -25,17 +25,55 @@ Qt user interface (PySide6 + pyqtgraph), publication figures with matplotlib.
 
 ## Installation
 
-Requirements: Python ≥ 3.10 and a Rust toolchain (`rustup`) for building from source.
+Requirements: Python ≥ 3.10 and Rust ≥ 1.83 (`cargo`, `rustc`) for building the native core.
+
+### As a program (Debian 13 / Ubuntu 24.04 and newer)
+
+Installs EZSpec into its own isolated environment and puts the `ezspec` command on the PATH:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # fish: source .venv/bin/activate.fish
-pip install -e ".[gui,test]"      # builds the Rust extension ezspec._core via maturin
+sudo apt install git pipx python3-venv build-essential cargo rustc \
+    libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
+    libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libxcb-image0 \
+    libdbus-1-3 libfontconfig1
+rustc --version                   # must be ≥ 1.83 (Debian 13: 1.85); otherwise install Rust via rustup
+git clone -b claude/trusting-einstein-647nt6 https://github.com/joreitz/EZSpec.git
+pipx install "./EZSpec[gui,mcmc]"  # builds the Rust core (about 1–2 min) and installs all dependencies
+pipx ensurepath                   # once; fish: fish_add_path ~/.local/bin
+ezspec                            # start (new terminal); a file or .ezspec project can be passed as argument
+```
+
+The `lib…` packages are the system libraries the Qt wheels need (X11/xcb and Wayland); on a normal
+desktop most of them are already installed. Without `libxcb-cursor0` Qt fails with “could not load
+the Qt platform plugin xcb”.
+
+Update: `cd EZSpec && git pull && pipx install --force ".[gui,mcmc]"`. Remove: `pipx uninstall ezspec`.
+
+Menu entry (optional), e.g. `~/.local/share/applications/ezspec.desktop`:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=EZSpec
+Comment=Spectrum analysis and curve fitting
+Exec=ezspec %F
+Icon=applications-science
+Terminal=false
+Categories=Science;Education;
+```
+
+(If the menu does not find `ezspec`, write the full path, e.g. `Exec=/home/<user>/.local/bin/ezspec %F`.)
+
+### For development
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate   # fish: source .venv/bin/activate.fish
+pip install -e ".[gui,mcmc,test]"  # builds the Rust extension ezspec._core via maturin
 ezspec                            # starts the GUI (alternatively: python -m ezspec)
 ```
 
-Without the compiled core everything runs on the NumPy/SciPy reference implementation
-(`EZSPEC_BACKEND=python` forces this). On Linux without a desktop, Qt needs
-`libegl1 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1`.
+After changes to the Rust code, run `pip install -e .` again. Without the compiled core everything runs
+on the NumPy/SciPy reference implementation (`EZSPEC_BACKEND=python` forces this).
 
 ## Using the GUI
 
