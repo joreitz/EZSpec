@@ -28,6 +28,9 @@ def _reader_call(raw) -> str:
             kw["extra_cols"] = opts["extra_cols"]
         args = ", ".join(f"{k}={v!r}" for k, v in kw.items())
         return f"read_file(RAW, {args})"
+    if reader and reader != "jcamp":       # a reader added through the registry (ezspec.io.register_reader)
+        kw = {"index": src.get("index", 0), "reader": reader, **opts}
+        return "read_file(RAW, " + ", ".join(f"{k}={v!r}" for k, v in kw.items()) + ")"
     return "read_file(RAW)"
 
 

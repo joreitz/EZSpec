@@ -27,25 +27,40 @@ from .theme import COMPONENT_COLORS
 
 
 class ImportDialog(QtWidgets.QDialog):
-    def __init__(self, path, parent=None):
+    """Import one file. ``remember`` adds the switch "use these settings for every file of this
+    kind" (its initial state); afterwards ``reader``/``options`` hold the import profile and
+    ``remember_profile`` whether it should be stored."""
+
+    def __init__(self, path, parent=None, remember: bool | None = None):
         super().__init__(parent)
         self.path = Path(path)
         self.setWindowTitle(f"Import – {self.path.name}")
         self.info = sniff(self.path)
+        self.reader = self.info["format"]
+        self.options = {}
+        self.remember = None
         lay = QtWidgets.QVBoxLayout(self)
         self.datasets = []
-        if self.info["format"] == "jcamp":
-            specs = read_spectra(self.path)
+        if self.reader != "text":          # formats without import options: summary of what was found
+            specs = read_spectra(self.path, reader=self.reader)
             s = specs[0]
-            j = s.meta.get("jcamp", {})
-            text = (f"<b>JCAMP-DX</b> · {j.get('TITLE', '')}<br>Data type: {j.get('DATATYPE', '?')} · "
-                    f"{s.n} points · x: {j.get('XUNITS', '?')} · y: {j.get('YUNITS', '?')}")
-            for w in s.meta.get("import_warnings", []):
-                text += f"<br><span style='color:#b36b00'>⚠ {w}</span>"
+            if self.reader == "jcamp":
+                j = s.meta.get("jcamp", {})
+                text = (f"<b>JCAMP-DX</b> · {j.get('TITLE', '')}<br>Data type: {j.get('DATATYPE', '?')} · "
+                        f"{s.n} points · x: {j.get('XUNITS', '?')} · y: {j.get('YUNITS', '?')}")
+            else:
+                text = f"<b>{self.info['title']}</b> · {len(specs)} spectr{'um' if len(specs) == 1 else 'a'}"
+                for sp in specs[:12]:
+                    text += f"<br>{sp.meta.get('name', self.path.stem)}: {sp.n} points · x: {sp.x_label} · y: {sp.y_label}"
+                if len(specs) > 12:
+                    text += f"<br>… and {len(specs) - 12} more"
+            for sp in specs:
+                for w in sp.meta.get("import_warnings", []):
+                    text += f"<br><span style='color:#b36b00'>⚠ {w}</span>"
             lay.addWidget(QtWidgets.QLabel(text))
-            self._jcamp = specs
+            self._specs = specs
         else:
-            self._jcamp = None
+            self._specs = None
             top = QtWidgets.QFormLayout()
             self.delim = QtWidgets.QComboBox()
             for label, val in (("automatic", "auto"), ("Tab", "\t"), ("Semicolon ;", ";"), ("Comma ,", ","),
@@ -81,6 +96,14 @@ class ImportDialog(QtWidgets.QDialog):
             self.status = QtWidgets.QLabel()
             self.status.setObjectName("hint")
             lay.addWidget(self.status)
+            if remember is not None:
+                ext = self.path.suffix.lower() or "files without extension"
+                self.remember = QtWidgets.QCheckBox(f"Use these settings for every *{ext} file opened without "
+                                                    "this dialog (Explorer, drag and drop)")
+                self.remember.setToolTip("Stored in the project as the import profile of this file type. "
+                                         "Files the settings do not fit are read with automatic detection.")
+                self.remember.setChecked(bool(remember))
+                lay.addWidget(self.remember)
             self.delim.currentIndexChanged.connect(self._reparse)
             self.decimal.currentIndexChanged.connect(self._reparse)
             self._reparse()
@@ -133,8 +156,8 @@ class ImportDialog(QtWidgets.QDialog):
 
     def _accept(self):
         try:
-            if self._jcamp is not None:
-                specs = self._jcamp
+            if self._specs is not None:
+                specs = self._specs
             else:
                 x = self.xcol.currentData()
                 s = self.scol.currentData()
@@ -149,6 +172,11 @@ class ImportDialog(QtWidgets.QDialog):
                 specs = read_spectra(self.path, x_col=x, y_cols=ys or None, sigma_col=s,
                                      delimiter=self.tinfo.delimiter, decimal=self.tinfo.decimal,
                                      x_unit=self.unit.currentData(), extra_cols=extra or None)
+                # the profile keeps "automatic" where it was chosen, so it also fits files of the same
+                # layout that were exported with another delimiter or decimal separator
+                self.options = {"x_col": x, "y_cols": ys or None, "sigma_col": s,
+                                "delimiter": self.delim.currentData(), "decimal": self.decimal.currentData(),
+                                "x_unit": self.unit.currentData(), "extra_cols": extra or None}
             raw = self.path.read_bytes()
             self.datasets = [Dataset(name=sp.meta.get("name", self.path.stem), raw=sp, raw_bytes=raw,
                                      raw_ext=self.path.suffix.lower()) for sp in specs]
@@ -156,6 +184,10 @@ class ImportDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "Import", str(e))
             return
         self.accept()
+
+    @property
+    def remember_profile(self) -> bool:
+        return self.remember is not None and self.remember.isChecked()
 
 
 # ============================================================================ figure editor

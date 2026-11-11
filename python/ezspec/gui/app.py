@@ -24,11 +24,10 @@ def main(argv=None) -> int:
     win.show()
 
     def open_arguments():          # after the event loop has started: window first, then dialogs
-        for arg in argv[1:]:
-            if arg.endswith(".ezspec"):
-                win.open_project(arg)
-            else:
-                win.import_data(arg)
+        if argv[1:]:               # a folder, a project or spectrum files
+            win.open_paths(argv[1:])
+        else:
+            win.restore_session()
     QtCore.QTimer.singleShot(0, open_arguments)
     return app.exec()
 

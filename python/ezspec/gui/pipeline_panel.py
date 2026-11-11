@@ -12,7 +12,41 @@ from .theme import SEVERITY_COLOR
 CATEGORY_ORDER = ["Range", "Correction", "Baseline", "Smoothing", "Uncertainty", "Scaling", "Units"]
 
 
+class _DatasetList(QtWidgets.QListWidget):
+    """List whose check boxes can be ticked without making the row the active dataset."""
+
+    def _on_checkbox(self, pos) -> QtWidgets.QListWidgetItem | None:
+        it = self.itemAt(pos)
+        if it is None or not (it.flags() & QtCore.Qt.ItemIsUserCheckable):
+            return None
+        width = self.style().pixelMetric(QtWidgets.QStyle.PM_IndicatorWidth, None, self)
+        return it if pos.x() <= self.visualItemRect(it).left() + width + 6 else None
+
+    def mousePressEvent(self, ev):
+        it = self._on_checkbox(ev.position().toPoint()) if ev.button() == QtCore.Qt.LeftButton else None
+        if it is not None:
+            on = it.checkState() != QtCore.Qt.Checked
+            it.setCheckState(QtCore.Qt.Checked if on else QtCore.Qt.Unchecked)
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() == QtCore.Qt.LeftButton and self._on_checkbox(ev.position().toPoint()) is not None:
+            ev.accept()                  # the press has toggled it already
+            return
+        super().mouseReleaseEvent(ev)
+
+    def mouseDoubleClickEvent(self, ev):
+        if self._on_checkbox(ev.position().toPoint()) is not None:
+            self.mousePressEvent(ev)     # fast clicking on a box toggles it, it does not start renaming
+            return
+        super().mouseDoubleClickEvent(ev)
+
+
 class DatasetsPanel(QtWidgets.QWidget):
+    """The datasets of the project. The current row is the active dataset (processing, model, fit);
+    a ticked dataset stays in the plot while another one is active."""
     importRequested = QtCore.Signal()
     exampleRequested = QtCore.Signal()
     combineRequested = QtCore.Signal()
@@ -20,41 +54,112 @@ class DatasetsPanel(QtWidgets.QWidget):
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
+        self.clipboard = None            # copied processing / model / fit options (a template dict)
+        self._icons = {}
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
-        self.list = QtWidgets.QListWidget()
-        self.list.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked)
+        self.list = _DatasetList()
+        self.list.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | QtWidgets.QAbstractItemView.EditKeyPressed)
+        self.list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._context_menu)
+        self.list.setToolTip("Tick a spectrum to keep it in the plot while you work on another one.\n"
+                             "Right-click: show/hide, colour, copy and paste processing.")
         self.list.currentRowChanged.connect(self._selected)
-        self.list.itemChanged.connect(self._renamed)
+        self.list.itemChanged.connect(self._item_changed)
         lay.addWidget(self.list)
         row = QtWidgets.QHBoxLayout()
-        for text, slot, tip in (("Import…", self.importRequested.emit, "Load text/CSV or JCAMP-DX"),
-                                ("Example", self.exampleRequested.emit, "Load a synthetic Raman spectrum"),
-                                ("Combine…", self.combineRequested.emit,
-                                 "Ratio/difference/formulas from several datasets (Ctrl+K)"),
-                                ("Duplicate", self._duplicate, "Copy with the same pipeline and model"),
-                                ("Remove", self._remove, "Remove dataset (can be undone)")):
-            b = QtWidgets.QPushButton(text)
+        row.setSpacing(3)
+        add = QtWidgets.QToolButton()
+        add.setText("+ Add")
+        add.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        add.setToolTip("Import a file, load example data, combine or duplicate datasets")
+        add_menu = QtWidgets.QMenu(add)
+        add_menu.addAction("Import data…", self.importRequested.emit)
+        add_menu.addAction("Example data", self.exampleRequested.emit)
+        add_menu.addSeparator()
+        add_menu.addAction("Combine datasets (ratio, difference, formulas)…", self.combineRequested.emit)
+        add_menu.addAction("Duplicate the active dataset", self._duplicate)
+        add.setMenu(add_menu)
+        row.addWidget(add)
+        for text, slot, tip in (("Remove", self._remove, "Remove the selected datasets (can be undone)"),
+                                (None, None, None),
+                                ("Show all", lambda: self.state.set_shown(
+                                    [d.id for d in self.state.project.datasets], True),
+                                 "Overlay all datasets in the plot (Ctrl+Shift+A)"),
+                                ("Only active", lambda: self.state.set_shown([], only=True),
+                                 "Show only the active dataset (Ctrl+Shift+H)")):
+            if text is None:
+                row.addStretch()
+                continue
+            b = QtWidgets.QToolButton()
+            b.setText(text)
             b.setToolTip(tip)
             b.clicked.connect(slot)
             row.addWidget(b)
         lay.addLayout(row)
         state.projectChanged.connect(self.refresh)
         state.currentChanged.connect(self.refresh)
+        state.viewChanged.connect(self.refresh)
+
+    # ------------------------------------------------------------------ list
+    def _icon(self, color):
+        icon = self._icons.get(color)
+        if icon is None:
+            pm = QtGui.QPixmap(12, 12)
+            pm.fill(QtCore.Qt.transparent)
+            painter = QtGui.QPainter(pm)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QColor(color))
+            painter.drawRoundedRect(1, 1, 10, 10, 2, 2)
+            painter.end()
+            icon = self._icons[color] = QtGui.QIcon(pm)
+        return icon
+
+    def selected_ids(self) -> list:
+        return [self.list.item(i).data(QtCore.Qt.UserRole) for i in range(self.list.count())
+                if self.list.item(i).isSelected()]
+
+    def selected_datasets(self) -> list:
+        """Selected datasets in list order (the active one if nothing else is selected)."""
+        out = []
+        for i in self.selected_ids():
+            try:
+                out.append(self.state.get(i))
+            except KeyError:
+                pass
+        cur = self.state.current()
+        return out or ([cur] if cur is not None else [])
 
     def refresh(self):
+        selected = set(self.selected_ids())
+        if self.state.current_id not in selected:      # the active dataset changed elsewhere: follow it
+            selected = {self.state.current_id}
         self.list.blockSignals(True)
         self.list.clear()
-        for ds in self.state.project.datasets:
+        preview = self.state.preview
+        for ds in self.state.project.datasets + ([preview] if preview is not None else []):
             it = QtWidgets.QListWidgetItem(ds.name)
             it.setData(QtCore.Qt.UserRole, ds.id)
             it.setFlags(it.flags() | QtCore.Qt.ItemIsEditable)
+            it.setIcon(self._icon(self.state.color_of(ds)))
             src = ds.source
-            it.setToolTip(f"{src.get('filename', '')}\nN = {ds.raw.n}, σ: {ds.raw.sigma_source.label}\n"
-                          f"SHA-256 {src.get('sha256', '')[:16]}…")
+            tip = (f"{src.get('filename', '')}\nN = {ds.raw.n}, σ: {ds.raw.sigma_source.label}\n"
+                   f"SHA-256 {src.get('sha256', '')[:16]}…")
+            if ds is preview:               # like a preview tab: replaced by the next file looked at
+                font = it.font()
+                font.setItalic(True)
+                it.setFont(font)
+                tip += "\nPreview – kept as soon as you work on it or open the file with a double click"
+            else:
+                it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+                it.setCheckState(QtCore.Qt.Checked if self.state.is_shown(ds.id) else QtCore.Qt.Unchecked)
+            it.setToolTip(tip)
             self.list.addItem(it)
             if ds.id == self.state.current_id:
-                self.list.setCurrentItem(it)
+                self.list.setCurrentItem(it, QtCore.QItemSelectionModel.NoUpdate)
+            it.setSelected(ds.id in selected)
         self.list.blockSignals(False)
 
     def _selected(self, row):
@@ -62,14 +167,29 @@ class DatasetsPanel(QtWidgets.QWidget):
         if it is not None:
             self.state.set_current(it.data(QtCore.Qt.UserRole))
 
-    def _renamed(self, it):
-        ds = self.state.project.get(it.data(QtCore.Qt.UserRole))
-        self.state.rename_dataset(ds, it.text().strip())
+    def _item_changed(self, it):
+        """A row was renamed or its box was ticked."""
+        try:
+            ds = self.state.get(it.data(QtCore.Qt.UserRole))
+        except KeyError:
+            return
+        name = it.text().strip()
+        if name != ds.name:
+            if name:
+                self.state.rename_dataset(ds, name)
+            else:
+                self.refresh()
+            return
+        if not (it.flags() & QtCore.Qt.ItemIsUserCheckable):
+            return
+        on = it.checkState() == QtCore.Qt.Checked
+        if on != self.state.is_shown(ds.id):
+            ids = self.selected_ids() if it.isSelected() else []    # a ticked selection is ticked as a whole
+            self.state.set_shown(ids if len(ids) > 1 else [ds.id], on)
 
+    # ------------------------------------------------------------------ actions
     def _remove(self):
-        ds = self.state.current()
-        if ds is not None:
-            self.state.remove_dataset(ds)
+        self.state.remove_datasets(self.selected_datasets())
 
     def _duplicate(self):
         from ..project import Dataset
@@ -80,6 +200,69 @@ class DatasetsPanel(QtWidgets.QWidget):
                        fit_options=type(ds.fit_options).from_dict(ds.fit_options.to_dict()),
                        raw_bytes=ds.raw_bytes, raw_ext=ds.raw_ext)
         self.state.add_dataset(copy)
+
+    def copy_setup(self, ds=None):
+        """Remember processing, model and fit options of a dataset for pasting onto others."""
+        from ..project import template_of
+        ds = ds or self.state.current()
+        if ds is not None:
+            self.clipboard = {"name": ds.name, **template_of(ds)}
+            self.state.message.emit(f"Copied processing and model of {ds.name}.", 4000)
+
+    def paste_setup(self, targets=None, model: bool = False) -> int:
+        """Give the selected datasets the copied processing (``model``: also model and fit options)."""
+        if self.clipboard is None:
+            return 0
+        targets = self.selected_datasets() if targets is None else targets
+        n = self.state.apply_setup(self.clipboard, targets, model=model)
+        self.state.message.emit(f"Applied to {n} dataset(s)." if n else "Nothing to change.", 4000)
+        return n
+
+    def _pick_color(self, datasets):
+        start = QtGui.QColor(self.state.color_of(datasets[0]))
+        color = QtWidgets.QColorDialog.getColor(start, self, "Colour of the spectrum")
+        if color.isValid():
+            self.state.set_color([d.id for d in datasets], color.name())
+
+    def _context_menu(self, pos):
+        st = self.state
+        it = self.list.itemAt(pos)
+        if it is not None and not it.isSelected():
+            self.list.setCurrentItem(it)
+        datasets = self.selected_datasets() if it is not None else []
+        real = [d for d in datasets if not st.is_preview(d)]
+        ids = [d.id for d in real]
+        n = len(real)
+        menu = QtWidgets.QMenu(self)
+        if real:
+            if any(not st.is_shown(i) for i in ids):
+                menu.addAction("Show in plot" if n == 1 else f"Show {n} in plot", lambda: st.set_shown(ids, True))
+            if any(st.is_shown(i) for i in ids):
+                menu.addAction("Hide from plot" if n == 1 else f"Hide {n} from plot",
+                               lambda: st.set_shown(ids, False))
+            menu.addAction("Show only this" if n == 1 else "Show only these", lambda: st.set_shown(ids, only=True))
+        all_ids = [d.id for d in st.project.datasets]
+        if all_ids:
+            menu.addAction("Show all", lambda: st.set_shown(all_ids, True))
+            menu.addAction("Hide all others", lambda: st.set_shown([], only=True))
+        if real:
+            menu.addSeparator()
+            menu.addAction("Colour…", lambda: self._pick_color(real))
+            menu.addSeparator()
+            if n == 1:
+                menu.addAction("Copy processing and model", lambda: self.copy_setup(real[0]))
+            if self.clipboard is not None:
+                src = self.clipboard["name"]
+                menu.addAction(f"Paste processing of “{src}”", lambda: self.paste_setup(real))
+                menu.addAction(f"Paste processing and model of “{src}”", lambda: self.paste_setup(real, model=True))
+            menu.addSeparator()
+            if n == 1:
+                menu.addAction("Rename", lambda: self.list.editItem(it))
+        if datasets:
+            menu.addAction("Remove" if len(datasets) == 1 else f"Remove {len(datasets)} datasets",
+                           lambda: st.remove_datasets(datasets))
+        if not menu.isEmpty():
+            menu.exec(self.list.viewport().mapToGlobal(pos))
 
 
 class PipelinePanel(QtWidgets.QWidget):

@@ -306,7 +306,7 @@ pub fn arpls(
     let n = y.len();
     let system = WhittakerSystem::new(n, lam, d)?;
     let mut w = initial_weights(n, w0, fixed)?;
-    let is_free = |i: usize| fixed.map_or(true, |f| f[i].is_nan());
+    let is_free = |i: usize| fixed.is_none_or(|f| f[i].is_nan());
     let mut history = Vec::with_capacity(max_iter + 1);
     let mut baseline = Vec::new();
     let mut converged = false;

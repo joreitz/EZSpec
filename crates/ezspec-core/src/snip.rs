@@ -28,9 +28,9 @@ pub fn pad_extrapolate(y: &[f64], pad: usize) -> Vec<f64> {
     let w = pad.min(n);
     let mut out = Vec::with_capacity(n + 2 * pad);
     if w == 1 {
-        out.extend(std::iter::repeat(y[0]).take(pad));
+        out.extend(std::iter::repeat_n(y[0], pad));
         out.extend_from_slice(y);
-        out.extend(std::iter::repeat(y[n - 1]).take(pad));
+        out.extend(std::iter::repeat_n(y[n - 1], pad));
         return out;
     }
     let xl: Vec<f64> = (0..w).map(|i| (pad + i) as f64).collect();
