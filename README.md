@@ -77,12 +77,67 @@ on the NumPy/SciPy reference implementation (`EZSPEC_BACKEND=python` forces this
 
 ## Using the GUI
 
-1. **Data**: *Import…* (text/CSV with automatic detection of delimiter and decimal comma,
-   several y columns, optional σ column and additional independent variables; JCAMP-DX including
-   ASDF compression) or *Example*. Files can also be dropped onto the window.
+The window is laid out like a code editor. The **activity bar** at the left edge shows or hides each panel
+(Explorer, Data, Processing, Model and fit, Results, History); Ctrl+B hides the whole left side, Ctrl+Alt+B
+the right side, so the plot can have the full window. Two things are found by typing a few letters:
+
+* **Ctrl+P – go to a file or dataset**: every spectrum of the opened folder (subfolders included) and every
+  open dataset;
+* **Ctrl+Shift+P – command palette**: every command of the menus and of the plot toolbar, with its shortcut.
+
+Without data the window shows a welcome page with the first steps and the recently opened folders.
+
+1. **Data**: *File → Open Folder* (Ctrl+Shift+O, or `ezspec <folder>`, or drop a folder onto the window)
+   shows a folder of spectra in the **Explorer**. It follows the file system, so spectra written while the
+   program runs appear by themselves; names are in natural order (`T2` before `T10`) and the filter box
+   narrows them (`300K`, `*_up.csv`).
+   * **Click** (or the arrow keys): *preview* – the file is drawn, but not added to the project. The next
+     preview replaces it. It is shown in italics in the Data list and is kept as soon as you work on it
+     (add a step, a peak, …).
+   * **Double click / Enter**: *open* as a dataset. Ctrl/Shift+click selects several files, the context menu
+     opens all spectra of a folder. Opening many files is one undo step. Open files are shown in bold; opening
+     one again selects its dataset instead of duplicating it.
+   * Files are read without a dialog (text/CSV with automatic detection of delimiter and decimal comma,
+     several y columns; JCAMP-DX including ASDF compression). If the detection is not what you want, use
+     *Open with import options…* (context menu) or *File → Import data* (Ctrl+I): x/y/σ columns, additional
+     independent variables, unit. *Use these settings for every \*.csv file* stores them as the **import
+     profile** of that file type, so the rest of the folder opens correctly with a click. A file the profile
+     does not fit is read with automatic detection, and the status bar says so.
+   * **The work on a folder is kept in the folder**: *Save* (Ctrl+S) writes `workspace.ezspec` into it – an
+     ordinary project file with the opened spectra (byte-exact), pipelines, models, fits, figures and import
+     profiles. Opening the folder again loads it, and the program starts in the folder of the last session.
+     *File → Open Recent* lists folders and projects; *Save as…* still writes a project anywhere.
+
+   Single files and projects can also be dropped onto the window or passed on the command line. *Example* loads
+   synthetic data.
+
+   **Several spectra in one plot.** The *Data* list shows every opened dataset with its colour. The selected
+   row is the *active* dataset – the one that processing, model and fit belong to. A ticked dataset stays in the
+   plot while another one is active, so a reference can be compared with every file you click through in the
+   Explorer. A click on an overlaid curve makes it the active one.
+
+   * *Show all* / *Only active* (Ctrl+Shift+A / Ctrl+Shift+H), or tick a whole selection at once
+     (Ctrl/Shift+click selects several). *Open and overlay in plot* in the Explorer does both steps, and so
+     does dragging files from the Explorer (or a file manager) onto the plot.
+   * **Stack** draws the spectra above each other (distance under *Display*), **Norm** scales them to
+     maximum 1, to 0…1 or to area 1. Both only change what is drawn: data, pipelines and fits stay as they
+     are, and the tools keep working on the active spectrum (a peak placed in a stacked view gets the height
+     of the data).
+   * Right-click in the Data list: colour, *Copy processing and model* of one dataset and *Paste* it onto a
+     selection (one undo step), remove several datasets at once.
+
+   **Zoom regions next to the full spectrum.** With the tool **Zoom** (key 5) drag over a part of the spectrum:
+   it is shown enlarged in a panel of its own beside the overview, with its own y scale. The band in the
+   overview and the frame of its panel share a colour; drag the band or its edges (or pan inside the panel) to
+   move it. To remove a region, click the × of its panel or right-click the band or the panel (with the Zoom
+   tool that removes it at once, with any other tool it is offered in a menu). The panels show the same curves as the overview and all tools work
+   in them – placing a peak or dragging its width is done most precisely there.
+
+   Overlays, colours, stacking and zoom regions are saved with the project. They are not part of the undo
+   history: looking at data differently is not a change of the analysis.
 2. **Processing**: *+ Step* (Range, Correction, Baseline, Smoothing, Uncertainty, Scaling, Units).
    A selected step shows its input and its result; parameters act live.
-   Plot tools (keys 1–4): **Anchor** (a click sets an anchor that snaps to the data; Shift places it
+   Plot tools (keys 1–5): **Anchor** (a click sets an anchor that snaps to the data; Shift places it
    freely; drag to move; right-click deletes), **Range** (masks, forced ranges, noise range, fit range).
 3. **Model and fit**: tool **Peak** (a click inserts a peak of the selected type; the top marker sets
    position and height, the side marker the width), *Find peaks*, *+ Component* (background, classic
@@ -128,14 +183,31 @@ on the NumPy/SciPy reference implementation (`EZSPEC_BACKEND=python` forces this
    monotonic in the data range is refused.
 8. **Export**: *File → Export*: figure (editor with journal templates), result tables
    (CSV/JSON/report), Python script. *Analysis → Series / global fit* (Ctrl+G).
-   Publication figures are not limited to the final result: *Figure…* in the plot toolbar (or Ctrl+E)
-   exports what the plot currently shows. With a processing step selected, that is the step's input and
+   Publication figures are not limited to the final result: *Figure → Figure of this dataset…* in the plot
+   toolbar (or Ctrl+E) exports what the plot currently shows. With a processing step selected, that is the step's input and
    output, e.g. data with the baseline and the corrected spectrum below it. *File → Export → Figure of
    the raw data* exports the unprocessed data. In the figure editor, *Content* switches between the
    result, the raw data and every step; *+ Curve* adds any curve of any stage (e.g. raw data under the
    processed data), and *Style* sets line, points, steps or filled area per curve. Each figure is stored
    in the project, and the exported Python script re-creates all of them from the raw data
    (`<name>_raw.pdf`, `<name>_step2.pdf`, …).
+
+   **Pages – several views on one sheet.** *Figure → Add this view to the page* (Ctrl+Shift+E) captures what
+   the plot shows as a *frame*: the active spectrum with its overlays, stacked or normalised as on screen, the
+   x range you zoomed to, and one further frame per zoom region, placed beside the overview as in the plot.
+   Change the view, capture again, and so collect a page frame by frame. In the *Pages* window
+   (Ctrl+Alt+P) the frames are arranged freely:
+
+   * drag a frame to move it and its handles to resize it; edges snap to the other frames, to the margin and
+     to full millimetres (Alt: free); *Align* lines up or distributes a selection and gives it the same width
+     or height; position and size can also be typed in mm;
+   * per frame: x and y range, fit, components, legend, axis labels, title, stacking and normalisation;
+     per page: size (A4, column widths, 16:9 or custom), font size, line width, labels (a), (b), …;
+   * *Export…* writes the whole page as PDF, SVG, PNG or EPS. The box of a frame includes its tick and axis
+     labels, so frames that touch do not overlap in the export.
+
+   Frames refer to the datasets instead of copying curves: after a new fit or another baseline the page
+   shows the new state. Pages are stored in the project file.
 
 ## Scripting API
 
@@ -161,7 +233,9 @@ r.value("p1_center"), r.stderr("p1_center"), r.stats.redchi, r.derived_table()
 profile_ci(r)                                         # asymmetric confidence intervals
 ```
 
-Further entry points: `ezspec.Pipeline` (steps, serialization, caching),
+Further entry points: `ezspec.io.register_reader` (new file formats, see below),
+`ezspec.workspace` (`spectrum_files`, `load_file`/`load_files` with import profiles),
+`ezspec.Pipeline` (steps, serialization, caching),
 `ezspec.fit.fit_series`, `ezspec.fit.fit_global`, `ezspec.fit.compare`,
 `ezspec.fit.baseline_systematics`, `ezspec.fit.simulate_nested_test`, `ezspec.fit.mcmc`,
 `ezspec.combine.combine` (combining datasets),
@@ -192,6 +266,28 @@ s = ops.select_sweeps(s, direction="up", sweep=0)  # a single rising ramp
 s = ops.calibrate_x(s, calibration=cal, fixed="T=25", fixed_sigma="T=0.02")
 s.meta["calibration"]["sigma_max"]                  # systematic uncertainty of the new x axis
 ```
+
+### Adding a file format
+
+Formats live in a registry; a reader is one function plus one `register_reader` call. The Explorer, the
+file dialogs, drag and drop, `read_spectra`/`read_file` and the exported script use it from there:
+
+```python
+from ezspec.io import Reader, register_reader, source_meta
+from ezspec.spectrum import Spectrum
+
+def read_myformat(path, raw, x_unit=None):            # raw: the file's bytes
+    x, y = decode(raw)
+    meta = {"name": path.stem, "source": source_meta(path, raw, "myformat", {})}
+    return [Spectrum(x, y, x_unit=x_unit or "nm", meta=meta)]   # one or several spectra per file
+
+register_reader(Reader("myformat", "My instrument", (".myf",), read_myformat,
+                       detect=lambda path, raw: raw[:4] == b"MYF1",   # optional: recognise by content
+                       options=("x_unit",)))                           # what an import profile may store
+```
+
+A separately installed package can provide readers through an entry point in the group `ezspec.readers`
+(pointing to a `Reader`, a list of them, or a function returning them); they are registered on first use.
 
 ## Statistical semantics in detail
 
@@ -255,7 +351,13 @@ python/ezspec        spectrum.py (data type with σ source), ops/ (versioned ope
                      pipeline.py, models/ (components, safe formula parser, library, surfaces),
                      fit/ (engine, statistics, profile CI, bootstrap, comparison, series/global,
                      baseline systematics), combine.py, sweeps.py, calibration.py, slices.py,
-                     io/ (text, JCAMP-DX), project.py, export/ (figure, tables, script), gui/ (Qt),
+                     io/ (reader registry; text, JCAMP-DX), project.py, workspace.py (folders, import
+                     profiles), view.py (overlays, colours, stacking/normalising as display transforms,
+                     zoom regions), export/ (figure, page = views arranged on a sheet, tables, script),
+                     gui/ (Qt: state.py with undo and previews, scene.py = what a plot shows as plain
+                     data, plot_view.py draws a scene in the overview and in every zoom panel,
+                     explorer_panel.py, page_dialog.py (page composer), quick_pick.py (command
+                     palette, go to file), shell.py (activity bar, welcome page), panels, dialogs),
                      _reference.py (NumPy/SciPy reference)
 tests/               NIST StRD data (public domain) and test suite
 ```
@@ -265,9 +367,15 @@ parity tests and makes the interactive paths fast (baseline sliders, model previ
 
 ## Limitations and open points
 
+* Views are not edits: overlays, colours, stacking, zoom regions and the arrangement of pages are saved with
+  the project but are not on the undo stack (changes to a page do mark the project as unsaved).
+* One plot per window: there are no tabs or split views yet, and no dark theme.
+* The Python script export reproduces single datasets and their figures; pages are exported as PDF/SVG/PNG
+  from the program (or with `ezspec.export.page.save_page` from a loaded project).
 * The Rust LM inner loop for live fits of large models and parallel batches is not implemented yet;
   fits run through lmfit.
-* Vendor formats (OPUS, WiRE, OMNIC, SPC) and JCAMP NTUPLES (e.g. NMR FIDs) are still missing.
+* Vendor formats (OPUS, WiRE, OMNIC, SPC) and JCAMP NTUPLES (e.g. NMR FIDs) are still missing; they can be
+  added as readers without changing the rest of the program (see *Adding a file format*).
 * Not implemented yet: Bayesian evidence (dynesty), instrument function by convolution,
   hyperspectral maps. The simulation-calibrated "one more peak" test is local; there is no
   look-elsewhere correction.

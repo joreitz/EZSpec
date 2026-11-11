@@ -116,30 +116,27 @@ class Dataset:
         return result
 
     @classmethod
+    def all_from_bytes(cls, data: bytes, filename, **reader_kw) -> list:
+        """One dataset per spectrum in the file contents ``data`` (e.g. per y column)."""
+        from .io import read_bytes
+        path = Path(filename)
+        return [cls(name=s.meta.get("name", path.stem), raw=s, raw_bytes=data, raw_ext=path.suffix.lower())
+                for s in read_bytes(path, data, **reader_kw)]
+
+    @classmethod
+    def all_from_file(cls, path, **reader_kw) -> list:
+        """One dataset per spectrum in the file; the file is read once and kept byte-exact."""
+        path = Path(path)
+        return cls.all_from_bytes(path.read_bytes(), path, **reader_kw)
+
+    @classmethod
     def from_bytes(cls, data: bytes, filename: str, index: int = 0, **reader_kw) -> "Dataset":
         """Create a dataset from file contents (e.g. generated example data)."""
-        import tempfile
-        from .io import read_spectra
-        suffix = Path(filename).suffix
-        with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp) / filename
-            p.write_bytes(data)
-            s = read_spectra(p, **reader_kw)[index]
-        meta = dict(s.meta)
-        src = dict(meta.get("source", {}))
-        src["path"] = filename
-        meta["source"] = src
-        s = s.replace(meta=meta)
-        return cls(name=s.meta.get("name", Path(filename).stem), raw=s, raw_bytes=data, raw_ext=suffix.lower())
+        return cls.all_from_bytes(data, filename, **reader_kw)[index]
 
     @classmethod
     def from_file(cls, path, index: int = 0, **reader_kw) -> "Dataset":
-        from .io import read_spectra
-        path = Path(path)
-        specs = read_spectra(path, **reader_kw)
-        s = specs[index]
-        return cls(name=s.meta.get("name", path.stem), raw=s, raw_bytes=path.read_bytes(),
-                   raw_ext=path.suffix.lower())
+        return cls.all_from_file(path, **reader_kw)[index]
 
 
 @dataclass

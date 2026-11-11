@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -11,32 +12,33 @@ from .. import __version__, numfmt
 from .. import units as U
 from .._backend import HAVE_RUST, backend_name, set_backend
 from ..export.figure import curves_for, default_spec
+from ..export.page import PAGES_KEY, capture, check_page, new_page
 from ..export.results import write_all
 from ..export.script import generate_script
 from ..fit import bootstrap, fit, profile_ci
+from ..io import file_dialog_filter
 from ..models import add_peak, find_peaks
-from ..ops.baseline import anchor_values
 from ..project import Dataset, Project
-from ..slices import grouped_by_slices, slice_curves, slice_variable
-from ..sweeps import display_order, display_order_masked
+from ..view import VIEW_KEY, ViewState
+from ..workspace import (WORKSPACE_FILE, SpectraCache, datasets_of_file, load_files, profiles_of, set_profile,
+                         spectrum_files, workspace_file)
 from . import peak_edit
 from .dialogs import (BootstrapDialog, CalibrationDialog, CombineDialog, CompareDialog, FigureDialog,
                       ImportDialog, SeriesDialog)
+from .explorer_panel import ExplorerPanel
 from .model_panel import ModelPanel
+from .page_dialog import PageComposer
 from .pipeline_panel import DatasetsPanel, PipelinePanel
 from .plot_view import PlotView
+from .quick_pick import QuickPick, menu_commands
 from .results_panel import ResultsPanel
+from .scene import build_view, handle_values
+from .shell import ActivityBar, WelcomePage
 from .state import AppState, start_task
 
-
-def _disp(s, *arrays):
-    """Arrays of spectrum ``s`` in drawing order: acquisition order for
-    back-and-forth (multi-sweep) data, so up and down ramps are drawn as
-    separate traces instead of a zigzag between them."""
-    o = display_order(s)
-    if o is None:
-        return arrays
-    return tuple(np.asarray(a)[o] for a in arrays)
+LAYOUT_VERSION = 3          # bump when docks are added or renamed: older saved layouts are ignored
+MAX_RECENT = 10
+CONFIRM_OPEN_ABOVE = 100    # opening more files than this at once asks first
 
 
 STATS_HELP = """<h3>How EZSpec reports goodness of fit</h3>
@@ -62,10 +64,18 @@ errors (O'Haver). By default, smoothing in EZSpec is for display only.</li>
 
 QUICKSTART = """<h3>Quick start</h3>
 <ol>
-<li><b>Data</b>: Import (text/CSV, JCAMP-DX) or drag a file onto the window. Example: File → Example data.</li>
+<li><b>Data</b>: File → Open Folder (Ctrl+Shift+O) shows a folder of spectra in the Explorer: a click
+previews a file, a double click or Enter opens it, Ctrl/Shift+click selects several. Files and folders can also be
+dropped onto the window. “Open with import options…” (or File → Import data) sets columns and units and can remember
+them for all files of that type. Example: File → Example data.</li>
+<li><b>Several spectra</b>: tick datasets in the Data list to keep them in the plot while you work on another
+one (the selected row is the active dataset; a click on an overlaid curve activates it). “Stack” and “Norm” (normalise)
+only change the display. Right-click in the Data list: colour, copy/paste processing and model onto a selection.</li>
+<li><b>Zoom regions</b>: tool “Zoom” (key 5) – drag over a part of the spectrum to show it enlarged next to the
+full spectrum; drag the band to move it; the × of a panel or a right-click on the band or panel removes it. All tools also work inside the panels.</li>
 <li><b>Processing</b>: “+ Step”. The selected step shows its input and output; parameter changes apply live.
-Plot tools (keys 1–4): Navigate · Anchor (click to set, drag to move, right-click to delete, Shift = free) ·
-Range (masks, forced regions, noise/fit range) · Peak.</li>
+Plot tools (keys 1–5): Navigate · Anchor (click to set, drag to move, right-click to delete, Shift = free) ·
+Range (masks, forced regions, noise/fit range) · Peak · Zoom.</li>
 <li><b>σ</b>: import a σ column or add “Estimate noise → σ” – otherwise σ is treated as unknown (no χ²).</li>
 <li><b>Model</b>: Peak tool (click = new peak; drag markers = position/height/width), “Find peaks”,
 “+ Component” (background, classic function, custom formula). Table: start value, bounds, vary, expression.</li>
@@ -80,6 +90,9 @@ Select sweeps / Average sweeps” separates rising and falling ramps.</li>
 <li><b>Go further</b>: profile CI, bootstrap, MCMC, baseline systematics, compare variants, series/global fit (Ctrl+G).</li>
 <li><b>Export</b>: publication figure of the current view (Ctrl+E – result, raw data or a selected
 processing step), tables, Python script (reproduces everything from the raw data).</li>
+<li><b>Pages</b>: “Figure → Add this view to the page” (Ctrl+Shift+E) captures what the plot shows – overlays,
+stacking, zoom regions – as frames. In the Pages window (Ctrl+Alt+P) drag, resize and align the frames freely
+and export the sheet as one PDF.</li>
 </ol>
 <p>Every action can be undone (Ctrl+Z); the history is shown in the “History” dock.</p>"""
 
@@ -114,10 +127,22 @@ class MainWindow(QtWidgets.QMainWindow):
             numfmt.set_precision(2, 6)
         self._task = None
         self._range_target = None
+        self._cache = SpectraCache()       # parsed files of the Explorer
+        self._io_tasks = set()             # file loads running in the background (kept alive here)
+        self._preview_request = 0          # only the newest preview request is shown
+        self._composer = None              # page composer window (created when first used)
         self.setAcceptDrops(True)
 
         self.plot = PlotView()
-        self.setCentralWidget(self.plot)
+        self.welcome = WelcomePage()
+        self.central = QtWidgets.QStackedWidget()      # the welcome page until there is something to plot
+        self.central.addWidget(self.welcome)
+        self.central.addWidget(self.plot)
+        self.setCentralWidget(self.central)
+        self._pick = None                  # open quick pick (command palette / go to file)
+        self._side_memory = {}             # dock area -> docks that were visible before the side was hidden
+        self.explorer = ExplorerPanel()
+        self.d_explorer = self._dock("Explorer", self.explorer, QtCore.Qt.LeftDockWidgetArea)
         self.datasets_panel = DatasetsPanel(self.state)
         self.pipeline_panel = PipelinePanel(self.state)
         self.model_panel = ModelPanel(self.state)
@@ -131,8 +156,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.d_hist = self._dock("History", undo_view, QtCore.Qt.LeftDockWidgetArea)
         self.tabifyDockWidget(self.d_pipe, self.d_hist)
         self.d_pipe.raise_()
-        self.resizeDocks([self.d_data, self.d_pipe], [140, 520], QtCore.Qt.Vertical)
-        self.resizeDocks([self.d_data, self.d_model], [380, 560], QtCore.Qt.Horizontal)
+        self.resizeDocks([self.d_explorer, self.d_data, self.d_pipe], [250, 130, 420], QtCore.Qt.Vertical)
+        self.activity = ActivityBar(self)
+        self.addToolBar(QtCore.Qt.LeftToolBarArea, self.activity)
+        for dock, kind, tip in ((self.d_explorer, "explorer", "Explorer – the opened folder"),
+                                (self.d_data, "data", "Data – the opened spectra"),
+                                (self.d_pipe, "processing", "Processing steps"),
+                                (self.d_model, "model", "Model and fit"),
+                                (self.d_res, "results", "Results"),
+                                (self.d_hist, "history", "History (undo)")):
+            self.activity.add_dock(dock, kind, tip + " · click to show or hide")
+        self.activity.add_stretch()
+        self.activity.add_command("search", "Go to file or dataset (Ctrl+P)", self.quick_open)
+        self.activity.add_command("pages", "Pages – arrange several views on a sheet (Ctrl+Alt+P)", self.open_pages)
+        self.resizeDocks([self.d_data, self.d_model], [300, 520], QtCore.Qt.Horizontal)
         self.resizeDocks([self.d_model, self.d_res], [520, 420], QtCore.Qt.Vertical)
 
         self.busy = QtWidgets.QProgressBar()
@@ -153,11 +190,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_menus()
         self._wire()
         self._update_title()
+        self._update_central()
         geo = self.settings.value("geometry")
         if geo is not None:
             self.restoreGeometry(geo)
         else:
             self.resize(1500, 920)
+        layout = self.settings.value("layout")
+        if layout is not None:
+            self.restoreState(layout, LAYOUT_VERSION)
 
     # ================================================================ layout helpers
     def _dock(self, title, widget, area):
@@ -173,7 +214,13 @@ class MainWindow(QtWidgets.QMainWindow):
         mb = self.menuBar()
         f = mb.addMenu("&File")
         f.addAction("New project", self.new_project, QtGui.QKeySequence.New)
+        f.addAction("Open Folder…", lambda: self.open_folder(), QtGui.QKeySequence("Ctrl+Shift+O"))
         f.addAction("Open project…", self.open_project, QtGui.QKeySequence.Open)
+        self.recent_menu = f.addMenu("Open Recent")
+        self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
+        self.act_close_folder = f.addAction("Close Folder", self.close_folder)
+        self.act_close_folder.setEnabled(False)
+        f.addSeparator()
         f.addAction("Save", self.save_project, QtGui.QKeySequence.Save)
         f.addAction("Save as…", lambda: self.save_project(True), QtGui.QKeySequence.SaveAs)
         f.addSeparator()
@@ -188,6 +235,8 @@ class MainWindow(QtWidgets.QMainWindow):
         exp = f.addMenu("Export")
         exp.addAction("Figure of the current view…", lambda: self.figure_dialog(), QtGui.QKeySequence("Ctrl+E"))
         exp.addAction("Figure of the raw data…", lambda: self.figure_dialog("raw"))
+        exp.addAction("Add the current view to the page", self.capture_view, QtGui.QKeySequence("Ctrl+Shift+E"))
+        exp.addAction("Pages (arrange several views)…", self.open_pages, QtGui.QKeySequence("Ctrl+Alt+P"))
         exp.addAction("Fit results (CSV/JSON/report)…", self.export_results)
         exp.addAction("Python script (reproducible)…", self.export_script)
         f.addSeparator()
@@ -228,8 +277,20 @@ class MainWindow(QtWidgets.QMainWindow):
             bk.addAction(act)
 
         v = mb.addMenu("&View")
-        for d in (self.d_data, self.d_pipe, self.d_model, self.d_res, self.d_hist):
+        v.addAction("Command Palette…", self.command_palette, QtGui.QKeySequence("Ctrl+Shift+P"))
+        v.addAction("Go to File or Dataset…", self.quick_open, QtGui.QKeySequence("Ctrl+P"))
+        v.addSeparator()
+        v.addAction("Toggle Side Bar", lambda: self.toggle_side(QtCore.Qt.LeftDockWidgetArea),
+                    QtGui.QKeySequence("Ctrl+B"))
+        v.addAction("Toggle Right Side Bar", lambda: self.toggle_side(QtCore.Qt.RightDockWidgetArea),
+                    QtGui.QKeySequence("Ctrl+Alt+B"))
+        v.addSeparator()
+        for d in (self.d_explorer, self.d_data, self.d_pipe, self.d_model, self.d_res, self.d_hist):
             v.addAction(d.toggleViewAction())
+        v.addSeparator()
+        v.addAction("Overlay all datasets", lambda: self.show_all(True), QtGui.QKeySequence("Ctrl+Shift+A"))
+        v.addAction("Show only the active dataset", lambda: self.show_all(False),
+                    QtGui.QKeySequence("Ctrl+Shift+H"))
         v.addSeparator()
         nf = v.addMenu("Number format")
         nf.setToolTipsVisible(True)
@@ -253,7 +314,7 @@ class MainWindow(QtWidgets.QMainWindow):
             g2.addAction(a)
             sub2.addAction(a)
         v.addSeparator()
-        for i, key in enumerate(("navigate", "anchor", "region", "peak"), 1):
+        for i, key in enumerate(("navigate", "anchor", "region", "peak", "zoom"), 1):
             act = v.addAction(f"Tool: {self.plot.mode_actions[key].text()}",
                               lambda k=key: self.plot.set_mode(k))
             act.setShortcut(QtGui.QKeySequence(str(i)))
@@ -275,12 +336,38 @@ class MainWindow(QtWidgets.QMainWindow):
         st.stepSelected.connect(lambda _s: self.schedule_refresh())
         st.undo.cleanChanged.connect(lambda _c: self._update_title())
         st.projectChanged.connect(self._update_title)
+        st.projectChanged.connect(self._sync_explorer)
+        st.projectChanged.connect(self._update_central)
+        wl = self.welcome
+        wl.openFolderRequested.connect(lambda: self.open_folder())
+        wl.openProjectRequested.connect(lambda: self.open_project())
+        wl.importRequested.connect(lambda: self.import_data())
+        wl.exampleRequested.connect(lambda: self.load_example("raman"))
+        wl.recentRequested.connect(lambda p: self.open_paths([p]))
+        wl.helpRequested.connect(lambda: QtWidgets.QMessageBox.information(self, "Quick start", QUICKSTART))
+        st.viewChanged.connect(self._view_changed)
+        st.message.connect(lambda text, ms: self.statusBar().showMessage(text, ms))
+        self.explorer.overlayRequested.connect(lambda paths: self.open_files(paths, show=True))
+        self.plot.datasetClicked.connect(self.state.set_current)
+        self.plot.viewOptionChanged.connect(self._view_option)
+        self.plot.regionsEdited.connect(lambda regions: self.state.set_view(regions=regions))
+        self.explorer.openFolderRequested.connect(lambda: self.open_folder())
+        self.explorer.previewRequested.connect(self.preview_file)
+        self.explorer.openRequested.connect(self.open_files)
+        self.explorer.importRequested.connect(self.import_data)
         self.datasets_panel.importRequested.connect(self.import_data)
         self.datasets_panel.exampleRequested.connect(lambda: self.load_example("raman"))
         self.datasets_panel.combineRequested.connect(self.combine_dialog)
         self.pipeline_panel.calibrationRequested.connect(lambda: self.calibration_dialog(from_pipeline=True))
         self.pipeline_panel.rangeTargetChanged.connect(self.plot.set_range_target)
         self.plot.figureRequested.connect(lambda: self.figure_dialog())
+        self.plot.captureRequested.connect(self.capture_view)
+        self.plot.pagesRequested.connect(self.open_pages)
+        st.modifiedChanged.connect(self._update_title)
+        for sig in (st.projectChanged, st.viewChanged):
+            sig.connect(self._refresh_pages)
+        for sig in (st.pipelineChanged, st.modelChanged, st.fitChanged, st.fitOptionsChanged):
+            sig.connect(lambda _id: self._refresh_pages())
         self.model_panel.fitRequested.connect(self.run_fit)
         self.model_panel.autoPeaksRequested.connect(self.auto_peaks)
         self.results_panel.profileRequested.connect(self.run_profile)
@@ -295,6 +382,66 @@ class MainWindow(QtWidgets.QMainWindow):
         p.peakAdded.connect(self._peak_added)
         p.peakDragged.connect(self._peak_dragged)
         p.cursorMoved.connect(lambda x, y: self.cursor_label.setText(f"x = {x:.6g}   y = {y:.6g}"))
+
+    # ================================================================ shell
+    def _update_central(self):
+        """The plot as soon as there is something to plot, the welcome page before."""
+        empty = not self.state.project.datasets and self.state.preview is None
+        if empty:
+            self.welcome.set_recent([p for p in self._recent() if Path(p).exists()][:6])
+        self.central.setCurrentWidget(self.welcome if empty else self.plot)
+
+    def toggle_side(self, area):
+        """Hide the panels on one side of the plot, or bring back the ones that were hidden."""
+        docks = [d for d in self.findChildren(QtWidgets.QDockWidget)
+                 if self.dockWidgetArea(d) == area and not d.isFloating()]
+        shown = [d for d in docks if not d.isHidden()]
+        if shown:
+            self._side_memory[area] = shown
+            for d in shown:
+                d.hide()
+        else:
+            for d in self._side_memory.pop(area, None) or docks:
+                d.show()
+
+    def _show_pick(self, placeholder, items):
+        self._pick = QuickPick(self, placeholder, items)
+        self._pick.show()
+        return self._pick
+
+    def command_palette(self):
+        """Every command of the menus, found by typing a few letters of its name."""
+        items = [(title, shortcut, action.trigger) for title, shortcut, action in menu_commands(self.menuBar())
+                 if not title.endswith("Command Palette")]
+        # what lives in the plot toolbar and in the context menu of the Data list
+        plot, data = self.plot, self.datasets_panel
+        items += [("Plot › Auto-range", "", plot.autorange),
+                  ("Plot › Stack spectra (on/off)", "", plot.act_stack.toggle),
+                  ("Plot › Remove all zoom regions", "", lambda: plot.regionsEdited.emit([]))]
+        items += [(f"Plot › Normalise: {a.text()}", "", a.trigger) for a in plot.norm_actions.values()]
+        items += [(f"Plot › Show {a.text().lower()} (on/off)" if a is not plot.act_invert else "Plot › Invert x axis",
+                   "", a.toggle) for a in (plot.act_components, plot.act_resid, plot.act_points, plot.act_legend,
+                                           plot.act_invert)]
+        items += [("Data › Copy processing and model of the active dataset", "", data.copy_setup),
+                  ("Data › Paste processing onto the selected datasets", "", data.paste_setup),
+                  ("Data › Paste processing and model onto the selected datasets", "",
+                   lambda: data.paste_setup(model=True)),
+                  ("Data › Remove the selected datasets", "", data._remove)]
+        return self._show_pick("Type the name of a command", items)
+
+    def quick_open(self):
+        """Go to an open dataset or open a file of the folder by typing a part of its name."""
+        st = self.state
+        items = [(d.name, "open dataset", lambda i=d.id: st.set_current(i)) for d in st.project.datasets]
+        root = st.workspace_root
+        if root is not None:
+            is_open = {str(Path(d.source["path"]).resolve()) for d in st.project.datasets if d.source.get("path")}
+            for p in spectrum_files(root, recursive=True)[:5000]:
+                if str(p) not in is_open:
+                    rel = p.parent.relative_to(root)
+                    items.append((p.name, "" if str(rel) == "." else str(rel), lambda p=p: self.open_files([p])))
+        return self._show_pick("Go to a dataset or a file of the folder" if root is not None
+                               else "Go to a dataset (open a folder to find its files here)", items)
 
     def set_number_format(self, unc_digits=None, digits=None):
         """Display precision of results, report and tables (exports keep full precision)."""
@@ -316,102 +463,33 @@ class MainWindow(QtWidgets.QMainWindow):
             self._live_timer.start()
 
     def _values_for_handles(self, ds):
-        if self.state.fit_current(ds):
-            return ds.fit_result.values
-        try:
-            return ds.model.initial_values()
-        except Exception:  # noqa: BLE001
-            return None
+        return handle_values(ds, self.state.fit_current(ds))
+
+    def current_scene(self):
+        """What the plot shows: the active dataset with the spectra overlaid on it."""
+        st = self.state
+        ds = st.current()
+        if ds is None:
+            return build_view(None, None)
+        entries = [(d, st.run(d), st.color_of(d)) for d in st.shown_datasets()]
+        return build_view(ds, st.run(ds), entries, st.view, st.selected_step, st.fit_current(ds))
 
     def refresh_plot(self):
-        ds = self.state.current()
-        if ds is None:
-            self.plot.set_scene(data=([], []))
-            self.plot.set_tools()
-            return
-        run = self.state.run(ds)
-        sid = self.state.selected_step
-        step = None
-        if sid is not None:
-            try:
-                step = ds.pipeline.get(sid)
-            except KeyError:
-                step = None
-        if step is not None:
-            res = run.result(step.id)
-            inp = res.input if res.input is not None else ds.raw
-            out = res.output
-            xl = U.PLAIN_LABELS.get(inp.x_unit, inp.x_label)
-            kw = {"x_label": xl, "y_label": inp.y_label}
-            anchors_eff = None
-            if out is None:
-                self.plot.set_scene(data=_disp(inp, inp.x, inp.y), **kw)
-            elif step.op.startswith("baseline_"):
-                corrected = (out.x, out.y) if step.params.get("subtract", True) else (out.x, out.y - out.aux["baseline"])
-                self.plot.set_scene(data=_disp(inp, inp.x, inp.y), baseline=_disp(out, out.x, out.aux["baseline"]),
-                                    residuals=(*_disp(out, *corrected), False), **kw)
-                self.plot.p_res.setLabel("left", "corrected")
-                if step.op == "baseline_anchors":
-                    try:
-                        anchors_eff = anchor_values(inp, step.params.get("anchors", []), step.params.get("window", 3))
-                    except Exception:  # noqa: BLE001
-                        anchors_eff = None
-            elif "smoothed" in out.aux and "smoothed" not in inp.aux:
-                self.plot.set_scene(data=_disp(out, out.x, out.y), smoothed=_disp(out, out.x, out.aux["smoothed"]),
-                                    **kw)
-            elif step.op == "estimate_noise" or step.op == "exclude":
-                excl = out.exclude if out.exclude is not None else np.zeros(out.n, bool)
-                self.plot.set_scene(data=_disp(out, out.x, out.y), excluded=(out.x[excl], out.y[excl]), **kw)
-            else:
-                self.plot.set_scene(data=_disp(out, out.x, out.y), input=_disp(inp, inp.x, inp.y), **kw)
-            self.plot.set_tools(step=step, anchors_eff=anchors_eff)
-            return
+        self.plot.show_scene(self.current_scene())
 
-        s = run.final
-        xl = U.PLAIN_LABELS.get(s.x_unit, s.x_label)
-        self.plot.p_res.setLabel("left", "Res.")
-        mask = s.fit_mask
-        excluded = (s.x[~mask], s.y[~mask]) if (~mask).any() else None
-        smoothed = _disp(s, s.x, s.aux["smoothed"]) if "smoothed" in s.aux else None
-        fit_xy = comps = resid = preview = None
-        current = self.state.fit_current(ds)
-        r = ds.fit_result
-        if r is not None:
-            c = curves_for(s, None, r, r._internals.get("model"), n_dense=1500)
-            fit_xy = c["fit_dense"][:2]
-            comps = [(k.split(":", 1)[1].rstrip("_"), *v[:2]) for k, v in c.items()
-                     if k.startswith("component_dense:")]
-            if len(comps) < 2:
-                comps = []
-            rx, ry = r.x, r.normalized_residuals
-            o = display_order_masked(s, r.mask) if len(r.mask) == s.n else None
-            if o is not None:
-                rx, ry = rx[o], ry[o]
-            resid = (rx, ry, r.stats.chi2 is not None)
-        if ds.model.components and (r is None or not current) and s.n > 1:
-            try:
-                xd = np.linspace(s.x.min(), s.x.max(), 1500)
-                preview = (xd, ds.model.evaluate(xd, ds.model.initial_values()))
-            except Exception:  # noqa: BLE001 - invalid model: no preview
-                preview = None
-        # y(x, v) data such as a calibration surface: one group/curve per value of v
-        fit_model = r._internals.get("model") if r is not None else None
-        var = slice_variable(s, fit_model if fit_model is not None else ds.model)
-        slices = ()
-        if var is not None:
-            slices = slice_curves(s, fit_model, r.values if r is not None else None, var)
-            fit_xy, comps, preview = None, [], None
-            if resid is not None and len(r.mask) == s.n:
-                resid = (*grouped_by_slices(slices, r.mask, r.x, r.normalized_residuals), resid[2])
-        self.plot.set_scene(data=_disp(s, s.x, s.y), excluded=excluded, smoothed=smoothed, fit=fit_xy,
-                            fit_stale=not current, components=comps or (), preview=preview, residuals=resid,
-                            x_label=xl, y_label=s.y_label, scatter=s.meta.get("plot_style") == "scatter",
-                            slices=slices)
-        handles = []
-        vals = self._values_for_handles(ds)
-        if vals is not None and ds.model.peaks:
-            handles = peak_edit.handles(ds.model, vals)
-        self.plot.set_tools(step=None, peaks=handles, fit_range=ds.fit_options.x_range)
+    def _view_changed(self):
+        self.plot.set_view_options(self.state.view)
+        self.plot.set_regions(self.state.view.regions)
+        self.schedule_refresh()
+
+    def _view_option(self, key, value):
+        """Stack / normalise switched in the plot toolbar: the y scale changes as a whole."""
+        self.state.set_view(**{key: value})
+        self.plot.autorange()
+
+    def show_all(self, on=True):
+        """Overlay all datasets (or only the active one)."""
+        self.state.set_shown([d.id for d in self.state.project.datasets] if on else [], only=True)
 
     # ================================================================ plot interactions
     def _step_edit(self, params, text):
@@ -487,24 +565,213 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ================================================================ data / project
     def import_data(self, path=None):
+        """Import one file through the import dialog (columns, units, …)."""
         if not path:
             path, _ = QtWidgets.QFileDialog.getOpenFileName(
-                self, "Import data", self.settings.value("last_dir", ""),
-                "Spectra (*.txt *.csv *.dat *.tsv *.xy *.asc *.prn *.jdx *.dx *.jcm);;All files (*)")
+                self, "Import data", self.settings.value("last_dir", ""), file_dialog_filter())
         if not path:
             return
         self.settings.setValue("last_dir", str(Path(path).parent))
+        root = self.state.workspace_root
+        in_folder = root is not None and root in Path(path).resolve().parents
         try:
-            dlg = ImportDialog(path, self)
+            dlg = ImportDialog(path, self, remember=in_folder)
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.warning(self, "Import", f"Cannot read file:\n{e}")
             return
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        self.state.undo.beginMacro(f"Import {Path(path).name}")
-        for ds in dlg.datasets:
-            self.state.add_dataset(ds)
-        self.state.undo.endMacro()
+        if dlg.remember_profile:
+            set_profile(self.state.project, path, dlg.reader, dlg.options)
+        if self.state.preview is not None and datasets_of_file([self.state.preview], path):
+            self.state.set_preview(None)
+        self.state.add_datasets(dlg.datasets, f"Import {Path(path).name}")
+
+    # ================================================================ folder / explorer
+    def open_folder(self, path=None):
+        """Open a folder as workspace: the Explorer shows its spectra and the work is kept in
+        ``workspace.ezspec`` inside it (loaded here if it exists)."""
+        if not path:
+            path = QtWidgets.QFileDialog.getExistingDirectory(self, "Open folder",
+                                                              self.settings.value("last_dir", ""))
+        if not path:
+            return False
+        root = Path(path).resolve()
+        if not root.is_dir():
+            QtWidgets.QMessageBox.warning(self, "Open folder", f"Not a folder:\n{root}")
+            return False
+        if not self._confirm_discard():
+            return False
+        proj = Project()
+        ws = workspace_file(root)
+        if ws.exists():
+            try:
+                proj = Project.load(ws)
+            except Exception as e:  # noqa: BLE001
+                QtWidgets.QMessageBox.warning(self, "Open folder", f"{ws.name} could not be read and is left "
+                                                                   f"untouched:\n{e}")
+        self.settings.setValue("last_dir", str(root))
+        self._set_workspace(root)
+        self.state.new_project(proj)
+        self._remember_recent(root)
+        self._update_title()
+        self._refit_loaded()
+        self.d_explorer.show()
+        self.d_explorer.raise_()
+        return True
+
+    def close_folder(self):
+        if self.state.workspace_root is None or not self._confirm_discard():
+            return
+        self._set_workspace(None)
+        self.state.new_project(Project())
+        self._update_title()
+
+    def _set_workspace(self, root):
+        self.state.workspace_root = root
+        self._cache.clear()
+        self.explorer.set_root(root)
+        self.settings.setValue("session/folder", str(root) if root is not None else "")
+        self.act_close_folder.setEnabled(root is not None)
+
+    def restore_session(self):
+        """Reopen the folder of the last session (called at program start without arguments)."""
+        folder = self.settings.value("session/folder", "")
+        if folder and Path(folder).is_dir():
+            self.open_folder(folder)
+
+    def _sync_explorer(self):
+        paths = set()
+        for ds in self.state.project.datasets:
+            src = ds.source.get("path")
+            if src:
+                paths.add(str(Path(src).resolve()))
+        self.explorer.set_open_paths(paths)
+
+    def _recent(self) -> list:
+        v = self.settings.value("recent", [])
+        if isinstance(v, str):               # a one-element list comes back as a string
+            v = [v] if v else []
+        return [str(x) for x in (v or [])]
+
+    def _remember_recent(self, path):
+        path = str(path)
+        self.settings.setValue("recent", ([path] + [p for p in self._recent() if p != path])[:MAX_RECENT])
+        self._update_central()
+
+    def _fill_recent_menu(self):
+        self.recent_menu.clear()
+        for p in self._recent():
+            path = Path(p)
+            if not path.exists():
+                continue
+            if path.is_dir():
+                self.recent_menu.addAction(f"{path.name}  –  {path.parent}", lambda p=p: self.open_folder(p))
+            else:
+                self.recent_menu.addAction(f"{path.name}  –  {path.parent}", lambda p=p: self.open_project(p))
+        if self.recent_menu.isEmpty():
+            self.recent_menu.addAction("(nothing opened yet)").setEnabled(False)
+
+    def _load_in_background(self, paths, on_loaded, text=""):
+        """Read files in the thread pool (import profile or automatic detection, no dialog)."""
+        paths = [Path(p) for p in paths]
+        profiles = copy.deepcopy(profiles_of(self.state.project))
+        many = len(paths) > 1
+        if many:
+            self.busy.setRange(0, len(paths))
+            self.busy.setValue(0)
+            self.busy.setVisible(True)
+        if text:
+            self.statusBar().showMessage(text)
+
+        def finished():
+            self._io_tasks.discard(task)
+            if many and self._task is None:
+                self.busy.setVisible(False)
+
+        def done(results):
+            finished()
+            on_loaded(results)
+
+        def failed(msg):
+            finished()
+            QtWidgets.QMessageBox.warning(self, "Open", msg.split("\n\n")[0])
+
+        def progress(i, n):
+            if self._task is None:
+                self.busy.setRange(0, n)
+                self.busy.setValue(i)
+        task = start_task(load_files, done, failed, progress if many else None, paths, profiles, self._cache)
+        self._io_tasks.add(task)
+
+    def preview_file(self, path):
+        """Show a file in the plot without adding it to the project (single click in the Explorer)."""
+        shown = self.state.project.datasets + ([self.state.preview] if self.state.preview is not None else [])
+        known = datasets_of_file(shown, path)
+        if known:                               # already open or already previewed: just select it
+            self._preview_request += 1
+            self.state.set_current(known[0].id)
+            return
+        self._preview_request += 1
+        request = self._preview_request
+
+        def loaded(results):
+            if request != self._preview_request:
+                return                          # the selection has moved on
+            res = results[0]
+            if not res.ok:
+                self.statusBar().showMessage(res.error, 8000)
+                return
+            self.state.set_preview(res.datasets[0])
+            n = len(res.datasets)
+            msg = f"Preview: {res.path.name}"
+            if n > 1:
+                msg += f" – first of {n} spectra in this file"
+            self.statusBar().showMessage(res.note or msg + " · double click or Enter opens it", 8000)
+        self._load_in_background([path], loaded)
+
+    def open_files(self, paths, show=False):
+        """Open files as datasets without a dialog. Files that are already open are selected instead.
+        ``show``: overlay them in the plot."""
+        paths = [Path(p) for p in paths]
+        projects = [p for p in paths if p.suffix.lower() == ".ezspec"]
+        if projects:
+            self.open_project(str(projects[0]))
+            return
+        self._preview_request += 1              # a pending preview must not replace what is opened now
+        todo, existing = [], []
+        for p in paths:
+            found = datasets_of_file(self.state.project.datasets, p)
+            (existing.extend(found) if found else todo.append(p))
+        if show:
+            self.state.set_shown([d.id for d in existing], True)
+        if not todo:
+            if existing:
+                self.state.set_current(existing[0].id)
+            return
+        if len(todo) > CONFIRM_OPEN_ABOVE:
+            r = QtWidgets.QMessageBox.question(self, "Open", f"Open {len(todo)} files as datasets?")
+            if r != QtWidgets.QMessageBox.Yes:
+                return
+
+        def loaded(results):
+            ok = [r for r in results if r.ok]
+            datasets = [d for r in ok for d in r.datasets]
+            if datasets:
+                pv = self.state.preview
+                if pv is not None and any(datasets_of_file([pv], r.path) for r in ok):
+                    self.state.set_preview(None)        # the preview is replaced by the opened file
+                title = ok[0].path.name if len(ok) == 1 else f"{len(ok)} files"
+                self.state.add_datasets(datasets, f"Open {title}")
+                if show:
+                    self.state.set_shown([d.id for d in datasets], True)
+            notes = [r.note for r in ok if r.note]
+            errors = [r.error for r in results if not r.ok]
+            self.statusBar().showMessage(notes[0] if notes else f"{len(datasets)} dataset(s) opened.", 6000)
+            if errors:
+                more = f"\n… and {len(errors) - 12} more" if len(errors) > 12 else ""
+                QtWidgets.QMessageBox.warning(self, "Open", "Could not be read:\n" + "\n".join(errors[:12]) + more)
+        self._load_in_background(todo, loaded, f"Opening {len(todo)} file(s)…" if len(todo) > 1 else "")
 
     def load_example(self, which):
         from ..examples import decay_example, raman_example, to_csv_bytes
@@ -572,6 +839,13 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.warning(self, "Open", str(e))
             return
+        path = Path(path).resolve()
+        self.settings.setValue("last_dir", str(path.parent))
+        if path.name == WORKSPACE_FILE:         # the workspace of a folder: show the folder as well
+            self._set_workspace(path.parent)
+            self._remember_recent(path.parent)
+        else:
+            self._remember_recent(path)
         self.state.new_project(proj)
         self._update_title()
         self._refit_loaded()
@@ -589,26 +863,38 @@ class MainWindow(QtWidgets.QMainWindow):
     def save_project(self, save_as=False):
         proj = self.state.project
         path = proj.path
-        if save_as or path is None:
-            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save project",
-                                                            str(Path(self.settings.value("last_dir", "")) /
-                                                                "project.ezspec"), "EZSpec project (*.ezspec)")
+        root = self.state.workspace_root
+        if not save_as and path is None and root is not None:
+            path = workspace_file(root)         # the work on a folder is kept inside the folder
+            if path.exists():                   # … but a workspace that is not the loaded one is not ours
+                r = QtWidgets.QMessageBox.question(
+                    self, "Save", f"{path.name} already exists in this folder and was not loaded.\n"
+                                  "Replace it with the current project?")
+                if r != QtWidgets.QMessageBox.Yes:
+                    return False
+        elif save_as or path is None:
+            start = root if root is not None else Path(self.settings.value("last_dir", ""))
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save project", str(start / "project.ezspec"),
+                                                            "EZSpec project (*.ezspec)")
             if not path:
                 return False
             if not path.endswith(".ezspec"):
                 path += ".ezspec"
+        view = ViewState.from_dict(self.state.view.to_dict())
+        view.prune(d.id for d in proj.datasets)
+        proj.meta[VIEW_KEY] = view.to_dict()
         try:
             proj.save(path)
         except Exception as e:  # noqa: BLE001
             QtWidgets.QMessageBox.warning(self, "Save", str(e))
             return False
-        self.state.undo.setClean()
+        self.state.mark_saved()
         self._update_title()
         self.statusBar().showMessage(f"Saved: {path}", 4000)
         return True
 
     def _confirm_discard(self):
-        if self.state.undo.isClean() or not self.state.project.datasets:
+        if not self.state.modified or not self.state.project.datasets:
             return True
         r = QtWidgets.QMessageBox.question(self, "Unsaved changes", "Save changes?",
                                            QtWidgets.QMessageBox.Save | QtWidgets.QMessageBox.Discard |
@@ -619,9 +905,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_title(self):
         p = self.state.project.path
-        name = Path(p).name if p else "Untitled"
+        root = self.state.workspace_root
+        if root is not None and (p is None or Path(p) == workspace_file(root)):
+            name = root.name or str(root)
+        else:
+            name = Path(p).name if p else "Untitled"
         try:
-            dirty = "" if self.state.undo.isClean() else " *"
+            dirty = " *" if self.state.modified else ""
         except RuntimeError:  # undo stack already destroyed during shutdown
             return
         self.setWindowTitle(f"{name}{dirty} – EZSpec {__version__}")
@@ -652,7 +942,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._task = None
             self._busy(False, "Fit done.")
             try:
-                d = self.state.project.get(ds_id)
+                d = self.state.get(ds_id)
             except KeyError:
                 return
             d.fit_result = result
@@ -869,6 +1159,73 @@ class MainWindow(QtWidgets.QMainWindow):
         name = backend_name()
         self.backend_label.setText("Backend: Rust" if name == "rust" else "Backend: Python (reference)")
 
+    # ================================================================ pages
+    def pages(self) -> list:
+        """Pages of the project: views arranged freely on a sheet (stored in the project file)."""
+        pages = self.state.project.meta.setdefault(PAGES_KEY, [])
+        if not pages:
+            pages.append(new_page())
+        for page in pages:
+            check_page(page)
+        return pages
+
+    def _page_resolver(self, ids):
+        st = self.state
+        return [(d, st.run(d), st.color_of(d), st.fit_current(d)) for d in st.project.datasets if d.id in ids]
+
+    def _page_names(self, ids) -> str:
+        names = []
+        for i in ids:
+            try:
+                names.append(self.state.project.get(i).name)
+            except KeyError:
+                names.append("(removed)")
+        return names[0] + (f" + {len(names) - 1} overlaid" if len(names) > 1 else "")
+
+    def open_pages(self):
+        """Show the page composer."""
+        if self._composer is None:
+            self._composer = PageComposer(self.pages(), self._page_resolver, self._page_names, self)
+            self._composer.captureRequested.connect(self.capture_view)
+            self._composer.changed.connect(self.state.touch)
+        elif self._composer.pages is not self.pages():
+            self._composer.set_pages(self.pages(), 0)
+        self._composer.show()
+        self._composer.raise_()
+        return self._composer
+
+    def _refresh_pages(self):
+        c = self._composer
+        if c is None:
+            return
+        if c.pages is not self.state.project.meta.get(PAGES_KEY):     # another project was opened
+            c.set_pages(self.pages(), 0)
+        elif c.isVisible():
+            c.refresh()
+
+    def capture_view(self):
+        """Add what the plot shows to the current page: the view as a frame, each zoom region as a
+        frame next to it."""
+        st = self.state
+        ds = st.current()
+        if ds is None:
+            return []
+        if st.is_preview(ds):
+            st.pin_preview()                 # a page refers to datasets of the project
+        composer = self._composer
+        pages = self.pages()
+        page = composer.page if composer is not None and composer.pages is pages else pages[0]
+        x_range, y_range = self.plot.visible_ranges()
+        shown = [d.id for d in st.shown_datasets() if d is not ds]
+        frames = capture(page, ds.id, shown, st.view, step=st.selected_step, x_range=x_range, y_range=y_range,
+                         regions=st.view.regions)
+        st.touch()
+        composer = self.open_pages() if composer is None or not composer.isVisible() else composer
+        if frames[0] not in [it.frame for it in composer.items]:
+            composer.add_frames(frames)
+        self.statusBar().showMessage(f"Added {len(frames)} frame(s) to “{page['name']}”.", 5000)
+        return frames
+
     # ================================================================ export
     @staticmethod
     def _figure_key(ds, stage):
@@ -883,7 +1240,10 @@ class MainWindow(QtWidgets.QMainWindow):
             stage = self.state.selected_step or "result"
         dlg = FigureDialog(ds, self.state.project.figures.get(self._figure_key(ds, stage)), self, stage=stage)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
+            if self.state.is_preview(ds):
+                self.state.pin_preview()
             self.state.project.figures[self._figure_key(ds, dlg.stage)] = dlg.spec
+            self.state.touch()
             self.statusBar().showMessage("Figure saved in project.", 3000)
 
     def export_results(self):
@@ -947,16 +1307,31 @@ class MainWindow(QtWidgets.QMainWindow):
             ev.acceptProposedAction()
 
     def dropEvent(self, ev):
-        for url in ev.mimeData().urls():
-            p = url.toLocalFile()
-            if p.endswith(".ezspec"):
-                self.open_project(p)
-            else:
-                self.import_data(p)
+        paths = [url.toLocalFile() for url in ev.mimeData().urls()]
+        pos = self.plot.mapFrom(self, ev.position().toPoint())
+        on_plot = self.central.currentWidget() is self.plot and self.plot.rect().contains(pos)
+        self.open_paths(paths, show=on_plot)             # dropped onto the plot: overlay with what is shown
+
+    def open_paths(self, paths, show=False):
+        """Open whatever is given: a folder as workspace, a project, or spectrum files (dropped onto
+        the window or passed on the command line). ``show``: overlay the files in the plot."""
+        paths = [Path(p) for p in paths if p]
+        folders = [p for p in paths if p.is_dir()]
+        projects = [p for p in paths if p.suffix.lower() == ".ezspec"]
+        if folders:
+            self.open_folder(folders[0])
+        elif projects:
+            self.open_project(str(projects[0]))
+        files = [p for p in paths if p.is_file() and p.suffix.lower() != ".ezspec"]
+        if files:
+            self.open_files(files, show=show)
 
     def closeEvent(self, ev):
         if not self._confirm_discard():
             ev.ignore()
             return
         self.settings.setValue("geometry", self.saveGeometry())
+        self.settings.setValue("layout", self.saveState(LAYOUT_VERSION))
+        if self._composer is not None:
+            self._composer.close()
         ev.accept()

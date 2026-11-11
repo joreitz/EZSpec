@@ -40,8 +40,6 @@ def wait(app, w):
 
 @pytest.fixture
 def win(app, tmp_path):
-    QtCore.QSettings.setDefaultFormat(QtCore.QSettings.IniFormat)
-    QtCore.QSettings.setPath(QtCore.QSettings.IniFormat, QtCore.QSettings.UserScope, str(tmp_path))
     w = MainWindow()
     w.show()
     w.load_example("raman")
@@ -336,17 +334,17 @@ def test_back_and_forth_ramp_is_drawn_in_acquisition_order(app, win):
     pump(app)
     w.state.set_current(ds.id)
     w.refresh_plot()
-    xd, _ = w.plot.c_data.getData()
+    xd, _ = w.plot.layer.c_data.getData()
     np.testing.assert_allclose(xd, x)                   # not re-sorted: no zigzag between the ramps
-    assert not w.plot.c_data.opts["clipToView"]
+    assert not w.plot.layer.c_data.opts["clipToView"]
     w.plot.act_points.setChecked(True)
-    assert w.plot.c_data.opts["symbol"] == "o"
+    assert w.plot.layer.c_data.opts["symbol"] == "o"
     w.plot.act_points.setChecked(False)
     w.pipeline_panel.add_step("select_sweeps")
     pump(app)
     w.state.select_step(None)
     w.refresh_plot()
-    xd, _ = w.plot.c_data.getData()
+    xd, _ = w.plot.layer.c_data.getData()
     assert len(xd) == 240 and np.sum(np.diff(xd) < 0) == 1    # two up ramps, drawn one after the other
 
 
@@ -371,7 +369,7 @@ def test_calibration_surface_slices_and_dialog(app, win):
     pump(app)
     w.state.set_current(cal.id)
     w.refresh_plot()
-    assert len(w.plot._slice_items) == 5 and not w.plot.c_data.isVisible()   # one group per T, no zigzag
+    assert len(w.plot.layer.slice_items) == 5 and not w.plot.layer.c_data.isVisible()   # one group per T, no zigzag
     assert w.model_panel._extra_variables() == ["T"]
     w.model_panel.add_surface("plane", "T")
     pump(app)
@@ -379,7 +377,7 @@ def test_calibration_surface_slices_and_dialog(app, win):
     wait(app, w)
     assert cal.fit_result is not None and cal.fit_result.success
     w.refresh_plot()
-    assert len(w.plot._slice_items) == 10                                  # points + slice curve per T
+    assert len(w.plot.layer.slice_items) == 10                                  # points + slice curve per T
     sources = [cal]
     dlg = CalibrationDialog(w.state, sources, source=cal, target=meas, parent=w)
     assert list(dlg.fixed_edits) == ["T"] and dlg.fixed_edits["T"].value() == 25.0
